@@ -9,6 +9,10 @@ defmodule Triex.TriexTest do
   test "simple" do
     trie = new()
 
+    assert not match(trie, "")
+    assert not match(trie, "a")
+    assert not match(trie, "x")
+
     add(trie, ["abc","a","abcdef"])
 
     assert match(trie, "a")
@@ -17,6 +21,7 @@ defmodule Triex.TriexTest do
 
     assert not match(trie, "")
     assert not match(trie, "x")
+    assert not match(trie, "b")
     assert not match(trie, "ab")
     assert not match(trie, "abxy")
     assert not match(trie, "abcd")
