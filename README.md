@@ -13,9 +13,9 @@ The implementation is based on the idea of _Process Oriented Programming:_
 * Process networks naturally run in parallel.
 
 Each process (node) has:
-- flag to indicate if it is a matching terminal state
-- map of matching characters to the next (child) process 
-  in the tree (outgoing edges)
+- Flag to indicate if it is a matching terminal state.
+- Map of matching characters to the next (child) process 
+  in the tree (outgoing edges).
   
 Note that partial/final strings are not stored in the nodes:
 nodes do not know the string or prefix that they match.
@@ -23,7 +23,7 @@ nodes do not know the string or prefix that they match.
 Traversals of the tree are implemented as a sequence of messages
 propagating down one path within the tree.
 
-There are two kinds of traversals: _add_ and _match._
+There are two main kinds of traversals: _add_ and _match._
 
 The traversal messages contain a source/target string.
 At each step of the traversal, 
@@ -47,14 +47,15 @@ In fact, all common suffices could be factored out and reused,
 which would be useful for common parts of speech
 (e.g. in English "-ed", "-ing", "-ly").
 However there is no obvious and efficient bidirectional 
-way to build the trie (hmmm... TODO :)
+way to build the trie 
+(hmmm... TODO - not the same as Aho-Corasick :)
 
 ## API
 
 There are 4 public functions:
 - `new`: build a new empty trie
-- `add`: add one strings to the trie
-- `match`: test if a string is in the trie
+- `add`: add one or more strings to the trie
+- `match`: test if a complete string is in the trie
 - `dump`: returns the tree structure 
   
 `new` creates a new trie containing a root node (process).
@@ -68,7 +69,7 @@ and the traversal continues.
 When the new string is consumed,
 the last node is marked as a terminal _success_ node.
 
-`match` tests if a string is included in the trie.
+`match` tests if a complete string is included in the trie.
 The api function initiates a _match_ traversal of the tree. 
 The traversal passes through nodes that match a prefix of the new string.
 If the string is all consumed, and the last visited node is a terminal node,
@@ -83,11 +84,27 @@ The nodes and edges can be reconstructed into the tree state machine.
 (TODO - GraphViz DOT conversion and rendering).
 The dump traversal starts from the root.
 Each node returns its info, then propagates the `dump` message
-to all its child processes along outgoing edges.
-The traversal manages the current prefix match.
+to _all_ its child processes along outgoing edges (fan-out).
+The traversal manages the current prefix match to label nodes.
 The spawning api function collates all the returned info
 and keeps a count of how many nodes have yet to report.
 
+### Future Extensions
+
+1. Use of '.' (1) and '*' (n) wildcards.
+The approach would be to convert the tree into NFA behavior:
+wildcards would propagate match traversals to all outgoing edges,
+and send a tally message back to the executor,
+which waits for all the additional results (like the dump traversal).
+
+2. Suffix optimization for total match (as discussed above).
+
+3. Partial match and sliding window, then need full Aho-Corasick.
+
+3. GraphViz DOT output and rendering.
+
+4. File input for matching. 
+   Two options: existing tokenized word search, or future continuous matching.
 
 ## Install
 
@@ -97,16 +114,34 @@ by adding `triex` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:triex, "~> 0.1.0"}
+    {:triex, git: "https://github.com/mike-french/triex.git", tag: "~> 1.0.0"}
   ]
 end
 ```
 
-## Test
+## Project 
 
-Run all Triex tests, excluding benchmarks:
+Compile the project:
 
-`$ mix test`
+`mix deps.get`
+
+`mix compile`
+
+Run dialyzer for type analysis:
+
+`mix dialyzer`
+
+Run the tests (excluding benchmarks):
+
+`mix test`
+
+Run benchmarks:
+
+`mix test --only: benchmark:true`
+
+Generate the documentation:
+
+`mix docs`
 
 ## License
 
