@@ -5,28 +5,60 @@ String trie lookup using tree of processes (Elixir).
 ## Design
 
 The trie is built as a tree of independent processes.
-Each process has:
-- flag to indicate if it is a matching terminal node
-- map of characters to the next (child) process in the tree
+
+The implementation is based on the idea of _Process Oriented Programming:_ 
+* Algorithms are implemented using a fine-grain directed graph of 
+  independent share-nothing processes.
+* Processes communicate asynchronously by passing messages. 
+* Process networks naturally run in parallel.
+
+Each process (node) has:
+- flag to indicate if it is a matching terminal state
+- map of matching characters to the next (child) process 
+  in the tree (outgoing edges)
+  
+Note that partial/final strings are not stored in the nodes:
+nodes do not know the string or prefix that they match.
 
 Traversals of the tree are implemented as a sequence of messages
 propagating down one path within the tree.
+
 There are two kinds of traversals: _add_ and _match._
-The traversal messages contain a string.
+
+The traversal messages contain a source/target string.
 At each step of the traversal, 
 one character is consumed from the head of the string.
-Each match is a single traversal, so it cannot be parallelized.
 
-TODO - spawn executor processes so each match is executed in parallel.
+Each addition or match is a single traversal, 
+so it cannot be parallelized.
+Additions are blocking synchronous traversals.
+However, multiple match traversals can propagate concurrently,
+because all state is in the traversal messages, not in the nodes.
+
+### Optimization Note
+
+All leaf nodes are matching terminal nodes with no onward edges.
+So they are all equivalent, and could be implemented by a single process,
+with convergence of the tree (DAG).
+But that would make it difficult to extend the tree
+by adding new strings to the trie.
+
+In fact, all common suffices could be factored out and reused,
+which would be useful for common parts of speech
+(e.g. in English "-ed", "-ing", "-ly").
+However there is no obvious and efficient bidirectional 
+way to build the trie (hmmm... TODO :)
 
 ## API
 
-There are 3 public functions:
-- new: build a new empty trie
-- add: add a string to the trie
-- match: test if a string is in the trie
-
-`new` creates a new trie tuple containing a root node (process).
+There are 4 public functions:
+- `new`: build a new empty trie
+- `add`: add one strings to the trie
+- `match`: test if a string is in the trie
+- `dump`: returns the tree structure 
+  
+`new` creates a new trie containing a root node (process).
+There is a variant that accepts a list of strings to add to the new trie.
 
 `add` adds one or more new strings to the trie. 
 The api function initiates an _add_ traversal of the tree for each new string. 
@@ -44,6 +76,18 @@ then the result is success (true).
 The result is failure (false) if either:
 - the string is not consumed, and there is no onward path
 - the string is consumed, but the last visited node is not a terminal node
+
+`dump` returns structure informtion for the node processes
+and edge transitions in the trie. 
+The nodes and edges can be reconstructed into the tree state machine.
+(TODO - GraphViz DOT conversion and rendering).
+The dump traversal starts from the root.
+Each node returns its info, then propagates the `dump` message
+to all its child processes along outgoing edges.
+The traversal manages the current prefix match.
+The spawning api function collates all the returned info
+and keeps a count of how many nodes have yet to report.
+
 
 ## Install
 

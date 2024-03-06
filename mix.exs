@@ -37,7 +37,7 @@ defmodule Triex.MixProject do
     [
       # runtime code dependencies ------------------
       # {:exa, git: "https://github.com/mike-french/exa.git", tag: "0.1.0"}
-      {:exa, path: "../exa"},
+      # {:exa, path: "../exa"},
 
       # building, documenting and testing ----------
 

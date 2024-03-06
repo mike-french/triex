@@ -6,7 +6,7 @@ defmodule Triex.Node do
   # -----
 
   # outgoing edges are indexed by character for transition
-  @typep edges() :: %{char() => pid()}
+  @typep edgemap() :: %{char() => pid()}
 
   # ----------------
   # public functions
@@ -22,7 +22,7 @@ defmodule Triex.Node do
   # main loop
   # ---------
 
-  @spec node(bool(), edges()) :: no_return()
+  @spec node(bool(), edgemap()) :: no_return()
   def node(final?, edges) do
     receive do
       {exec, {:match, <<>>}} ->
@@ -46,7 +46,7 @@ defmodule Triex.Node do
         send(exec, {:add, :ok})
         node(true, edges)
 
-      {exec, {:add,<<c::utf8, rest::binary>>}} when is_map_key(edges, c) ->
+      {exec, {:add, <<c::utf8, rest::binary>>}} when is_map_key(edges, c) ->
         # existing path, just propagate the add request
         send(Map.fetch!(edges, c), {exec, {:add, rest}})
 
@@ -54,8 +54,17 @@ defmodule Triex.Node do
         # no existing path, spawn a new node
         pid = start(rest == <<>>)
         new_edges = Map.put(edges, c, pid)
+        # continue traversal to the new node
         send(pid, {exec, {:add, rest}})
         node(final?, new_edges)
+
+      {exec, {:dump, str}} ->
+        # return this node info
+        send(exec, {:node, str, final?, Map.keys(edges)})
+        # propagate through all the outgoing edges
+        Enum.each(edges, fn {c, pid} ->
+          send(pid, {exec, {:dump, <<str::binary, c::utf8>>}})
+        end)
 
       any ->
         throw({:unhandled_message, [__MODULE__, any]})
