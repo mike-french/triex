@@ -28,7 +28,7 @@ defmodule Triex.Node do
       {exec, {:match, <<>>}} ->
         # empty string at terminal node is success
         # empty string at non-terminal node is failure
-        send(exec, {:result, final?})
+        send(exec, {:matched, final?})
 
       {exec, {:match, <<c::utf8, rest::binary>>}} when is_map_key(edges, c) ->
         # next character has a valid transition
@@ -38,7 +38,7 @@ defmodule Triex.Node do
         # still some unmatched input
         # we are not the final answer
         # there are no more matched transitions, so failure
-        send(exec, {:result, false})
+        send(exec, {:matched, false})
 
       {exec, {:add, <<>>}} ->
         # new terminal state

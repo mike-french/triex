@@ -1,10 +1,34 @@
 defmodule Triex.TriexTest do
   use ExUnit.Case
+
+  use Exa.Dot.Constants
+
   import Triex
 
   doctest Triex
 
-  # @out_dir Path.join(["test", "output"])
+  @lorem ~S"""
+    Lorem ipsum dolor sit amet, consectetur adipiscing elit. 
+    Mauris egestas nisi eget sapien commodo semper. 
+    Nunc volutpat velit eu erat euismod, quis pharetra eros pharetra. 
+    Proin scelerisque metus viverra nibh volutpat, 
+    posuere consequat quam laoreet. 
+    Nulla elementum sollicitudin tortor et scelerisque. 
+    Quisque dignissim tempus dui, nec auctor tellus elementum eget. 
+    Quisque auctor ex eros, sit amet fermentum neque porta eu. 
+    Pellentesque at molestie ligula, sed accumsan odio. 
+    Vestibulum iaculis mollis risus, sed tincidunt sem sollicitudin ac. 
+    Aliquam ac turpis in risus varius congue non sit amet mi. 
+    Phasellus vitae sodales lacus, non condimentum lectus. 
+    Interdum et malesuada fames ac ante ipsum primis in faucibus.
+  """
+
+  @filetype_txt "txt"
+  @in_dir Path.join(["test", "input"])
+  defp in_file(name), do: Exa.File.join(@in_dir, name, @filetype_txt)
+
+  @dot_dir Path.join(["test", "output", "dot"])
+  defp dot_file(name), do: Exa.File.join(@dot_dir, name, @filetype_dot)
 
   test "simple" do
     trie = new()
@@ -65,16 +89,56 @@ defmodule Triex.TriexTest do
             [
               {"", "a"},
               {"", "x"},
-              {"a", "ab"},
-              {"ab", "abc"},
-              {"abc", "abcd"},
-              {"abc", "abcp"},
-              {"abcd", "abcde"},
-              {"abcde", "abcdef"},
-              {"abcp", "abcpq"},
-              {"abcpq", "abcpqr"},
-              {"x", "xy"},
-              {"xy", "xyz"}
+              {"a", "b"},
+              {"ab", "c"},
+              {"abc", "d"},
+              {"abc", "p"},
+              {"abcd", "e"},
+              {"abcde", "f"},
+              {"abcp", "q"},
+              {"abcpq", "r"},
+              {"x", "y"},
+              {"xy", "z"}
             ]} == tree
+  end
+
+  test "dump dot" do
+    file = dot_file("abc")
+    trie = new(["abc", "a", "xyz", "abcdef", "abcpqr"])
+    dump_dot(trie, file)
+  end
+
+  test "matches" do
+    trie =
+      new([
+        "nunc",
+        "nulla",
+        "magna",
+        "ipsum"
+      ])
+
+    toks =
+      @lorem
+      |> String.split(~r{[[:space:],.;:']+}, trim: true)
+      |> Enum.map(&String.downcase/1)
+
+    tokrefs = Enum.zip(toks, 1..length(toks))
+    result = matches(trie, tokrefs)
+    assert %{"ipsum" => [2, 101], "nulla" => [36], "nunc" => [16]} == result
+  end
+
+  test "file" do
+    trie =
+      new([
+        "nunc",
+        "nulla",
+        "magna",
+        "ipsum"
+      ])
+
+    file = in_file("lorem_ipsum")
+    result = match_file(trie, file)
+    IO.inspect(result)
+    assert %{"ipsum" => [2, 101], "nulla" => [36], "nunc" => [16]} == result
   end
 end

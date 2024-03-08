@@ -1,5 +1,15 @@
 defmodule Triex do
   @moduledoc "The Triex trie interface."
+  import Exa.Types
+  alias Exa.Types, as: E
+
+  alias Exa.Std.Mol
+  alias Exa.Std.Mol, as: M
+
+  alias Exa.Gfx.Color.Col3f
+
+  alias Exa.Dot.DotWriter, as: DOT
+  alias Exa.Dot.Render
 
   alias Triex.Node
 
@@ -8,6 +18,8 @@ defmodule Triex do
   # ---------
 
   @timeout 5 * 1_000
+
+  @root "_root_"
 
   # -----
   # types 
@@ -40,6 +52,7 @@ defmodule Triex do
   @spec new([String.t(), ...]) :: trie()
   def new(strs) do
     trie = new()
+    # could sort strings by length here
     add(trie, strs)
     trie
   end
@@ -49,7 +62,7 @@ defmodule Triex do
   # ----------------
 
   @doc """
-  Blocking function to add one or more strings to the trie.
+  Add one or more strings to the trie (serialized, blocking).
 
   Note that the function works through side-effects 
   creating new processes. It does not return a new trie,
@@ -71,30 +84,76 @@ defmodule Triex do
     Enum.each(strs, &add(trie, &1))
   end
 
-  @doc "Blocking function to match a string in the trie."
+  @doc "Test a complete match of a single string in the trie (blocking)."
   @spec match(trie(), String.t()) :: bool()
   def match(trie, str) when is_trie(trie) do
     dispatch(trie, {:match, str})
 
     receive do
-      {:result, result} -> result
+      {:matched, result} -> result
     after
       @timeout -> raise RuntimeError, message: "Timeout"
     end
   end
 
   @doc """
-  Blocking function to gather structural info from the trie.
+  Test multiple words for a complete match in the trie (parallel).
+
+  The input strings are paired with an opaque application reference,
+  which will be returned with the string in the result.
+  The reference is typically a location in the text source, 
+  such as:
+  - character number `n`
+  - `{line, column}`
+  - `{filename, line, column}`
+  """
+  @spec matches(trie(), [{String.t(), any()}]) :: M.mol()
+  def matches(trie, strefs) when is_trie(trie) and is_list(strefs) do
+    self = self()
+
+    Enum.each(strefs, fn {str, _ref} = stref ->
+      Process.spawn(fn -> send(self, {stref, match(trie, str)}) end, [])
+    end)
+
+    match_recv(length(strefs), Mol.new())
+  end
+
+  defp match_recv(0, mol), do: Mol.reverse(mol)
+
+  defp match_recv(n, mol) do
+    receive do
+      {_stref, false} -> match_recv(n - 1, mol)
+      {{str, ref}, true} -> match_recv(n - 1, Mol.add(mol, str, ref))
+    after
+      @timeout -> raise RuntimeError, message: "Timeout"
+    end
+  end
+
+  @doc "Match all tokens in a file against the trie."
+  @spec match_file(trie(), E.filename()) :: any()
+  def match_file(trie, filename) when is_filename(filename) do
+    lines = Exa.File.from_file_lines(filename)
+    IO.inspect(length(lines), label: "no. lines")
+
+    # TODO - full file tokenization *****
+    toks =
+      lines
+      |> hd()
+      |> String.split(~r{[[:space:],.;:']+}, trim: true)
+      |> Enum.map(&String.downcase/1)
+
+    tokrefs = Enum.zip(toks, 1..length(toks))
+    matches(trie, tokrefs)
+  end
+
+  @doc """
+  Gather structural info from the trie (blocking, parallelized).
   """
   @spec dump(trie()) :: tree()
   def dump(trie) when is_trie(trie) do
     dispatch(trie, {:dump, ""})
     dump_recv(1, [], [])
   end
-
-  # -----------------
-  # private functions
-  # -----------------
 
   # receive dump messages with node and edge data
   # the count of nodes yet to report starts at 1
@@ -118,7 +177,7 @@ defmodule Triex do
 
         new_edges =
           Enum.reduce(chars, edges, fn c, es ->
-            [{str, <<str::binary, c::utf8>>} | es]
+            [{str, <<c::utf8>>} | es]
           end)
 
         dump_recv(n - 1 + length(chars), new_nodes, new_edges)
@@ -126,6 +185,45 @@ defmodule Triex do
       @timeout -> raise RuntimeError, message: "Timeout"
     end
   end
+
+  @doc """
+  Gather structural info from the trie,
+  convert to GraphViz DOT format and 
+  optionally render as PNG 
+  (if GraphViz is installed).
+  """
+  @spec dump_dot(trie(), E.filename(), bool()) :: String.t()
+  def dump_dot(trie, filename, render? \\ true) when is_trie(trie) and is_filename(filename) do
+    {nodes, edges} = dump(trie)
+
+    ncol = Col3f.gray(0.1)
+    ecol = Col3f.gray(0.2)
+
+    dot = "trie"
+    |> DOT.new_dot()
+    |> DOT.reduce(nodes, fn
+      {"", :initial}, dot -> DOT.node(dot, @root, color: ncol, shape: :point)
+      {name, :normal}, dot -> DOT.node(dot, name, color: ncol, shape: :ellipse)
+      {name, :final}, dot -> DOT.node(dot, name, color: ncol, shape: :doublecircle)
+    end)
+    |> DOT.reduce(edges, fn
+      {"", label}, dot -> DOT.edge(dot, @root, label, color: ecol, label: label)
+      {src, label}, dot -> DOT.edge(dot, src, src <> label, color: ecol, label: label)
+    end)
+    |> DOT.end_dot()
+    |> DOT.to_file(filename)
+    |> to_string()
+
+    if render? do
+      Render.render_dot(filename, :png)
+    end
+
+    dot
+  end
+
+  # -----------------
+  # private functions
+  # -----------------
 
   # send a message to the root node
   @spec dispatch(trie(), any()) :: any()

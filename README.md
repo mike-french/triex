@@ -42,13 +42,17 @@ So they are all equivalent, and could be implemented by a single process,
 with convergence of the tree (DAG).
 But that would make it difficult to extend the tree
 by adding new strings to the trie.
+One solution would be to order additions from longest to shortest,
+so there is never extension beyond an existing termination
+(assuming all accepted strings are known in advance).
 
-In fact, all common suffices could be factored out and reused,
-which would be useful for common parts of speech
+In fact, all common suffices without intermediate termination, 
+could be factored out and reused.
+This would reduce the process count for common parts of speech
 (e.g. in English "-ed", "-ing", "-ly").
-However there is no obvious and efficient bidirectional 
-way to build the trie 
-(hmmm... TODO - not the same as Aho-Corasick :)
+However there is no obvious and efficient bidirectional
+incremental way to build the trie, so it would have to be implemented 
+as a compilation post-process after all accepted strings have been added.
 
 ## API
 
@@ -59,13 +63,14 @@ There are 4 public functions:
 - `dump`: returns the tree structure 
   
 `new` creates a new trie containing a root node (process).
-There is a variant that accepts a list of strings to add to the new trie.
+There is a convenience version that accepts 
+a list of strings to add to the new trie.
 
 `add` adds one or more new strings to the trie. 
 The api function initiates an _add_ traversal of the tree for each new string. 
 The traversal passes through existing nodes that match a prefix of the new string.
 If there is no onward path, new child nodes are spawned,
-and the traversal continues. 
+and the traversal continues (like laying the track in front of the train).
 When the new string is consumed,
 the last node is marked as a terminal _success_ node.
 
@@ -76,7 +81,7 @@ If the string is all consumed, and the last visited node is a terminal node,
 then the result is success (true).
 The result is failure (false) if either:
 - the string is not consumed, and there is no onward path
-- the string is consumed, but the last visited node is not a terminal node
+- the string is consumed, but the last visited node is not a terminal node.
 
 `dump` returns structure informtion for the node processes
 and edge transitions in the trie. 
@@ -96,15 +101,16 @@ The approach would be to convert the tree into NFA behavior:
 wildcards would propagate match traversals to all outgoing edges,
 and send a tally message back to the executor,
 which waits for all the additional results (like the dump traversal).
+But don't want to implement a full regex (see Myrex sibling project).
 
 2. Suffix optimization for total match (as discussed above).
-
-3. Partial match and sliding window, then need full Aho-Corasick.
 
 3. GraphViz DOT output and rendering.
 
 4. File input for matching. 
    Two options: existing tokenized word search, or future continuous matching.
+   
+5. Partial match and sliding window, optimized by Aho-Corasick.
 
 ## Install
 
@@ -114,7 +120,7 @@ by adding `triex` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:triex, git: "https://github.com/mike-french/triex.git", tag: "~> 1.0.0"}
+    {:triex, git: "https://github.com/mike-french/triex.git", tag: "1.0.0"}
   ]
 end
 ```
