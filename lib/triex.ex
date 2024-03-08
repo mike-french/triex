@@ -6,6 +6,8 @@ defmodule Triex do
   alias Exa.Std.Mol
   alias Exa.Std.Mol, as: M
 
+  alias Exa.CharStream
+
   alias Exa.Gfx.Color.Col3f
 
   alias Exa.Dot.DotWriter, as: DOT
@@ -48,7 +50,12 @@ defmodule Triex do
   @spec new() :: trie()
   def new(), do: {:trie, Node.start(false)}
 
-  @doc "Create a new trie with a set of strings."
+  @doc """
+  Create a new trie with a set of strings.
+
+  It is assumed that the trie will not be further extended,
+  so `add` will not be called after this constructor.
+  """
   @spec new([String.t(), ...]) :: trie()
   def new(strs) do
     trie = new()
@@ -57,9 +64,9 @@ defmodule Triex do
     trie
   end
 
-  # ----------------
-  # public functions
-  # ----------------
+  # ---
+  # add
+  # ---
 
   @doc """
   Add one or more strings to the trie (serialized, blocking).
@@ -84,6 +91,10 @@ defmodule Triex do
     Enum.each(strs, &add(trie, &1))
   end
 
+  # -----
+  # match
+  # -----
+
   @doc "Test a complete match of a single string in the trie (blocking)."
   @spec match(trie(), String.t()) :: bool()
   def match(trie, str) when is_trie(trie) do
@@ -104,7 +115,7 @@ defmodule Triex do
   The reference is typically a location in the text source, 
   such as:
   - character number `n`
-  - `{line, column}`
+  - `{line, column, ichar}`
   - `{filename, line, column}`
   """
   @spec matches(trie(), [{String.t(), any()}]) :: M.mol()
@@ -132,19 +143,13 @@ defmodule Triex do
   @doc "Match all tokens in a file against the trie."
   @spec match_file(trie(), E.filename()) :: any()
   def match_file(trie, filename) when is_filename(filename) do
-    lines = Exa.File.from_file_lines(filename)
-    IO.inspect(length(lines), label: "no. lines")
-
-    # TODO - full file tokenization *****
-    toks =
-      lines
-      |> hd()
-      |> String.split(~r{[[:space:],.;:']+}, trim: true)
-      |> Enum.map(&String.downcase/1)
-
-    tokrefs = Enum.zip(toks, 1..length(toks))
-    matches(trie, tokrefs)
+    toks = filename |> Exa.File.from_file_text() |> CharStream.tokenize()
+    matches(trie, toks)
   end
+
+  # ----
+  # dump
+  # ----
 
   @doc """
   Gather structural info from the trie (blocking, parallelized).
@@ -199,20 +204,21 @@ defmodule Triex do
     ncol = Col3f.gray(0.1)
     ecol = Col3f.gray(0.2)
 
-    dot = "trie"
-    |> DOT.new_dot()
-    |> DOT.reduce(nodes, fn
-      {"", :initial}, dot -> DOT.node(dot, @root, color: ncol, shape: :point)
-      {name, :normal}, dot -> DOT.node(dot, name, color: ncol, shape: :ellipse)
-      {name, :final}, dot -> DOT.node(dot, name, color: ncol, shape: :doublecircle)
-    end)
-    |> DOT.reduce(edges, fn
-      {"", label}, dot -> DOT.edge(dot, @root, label, color: ecol, label: label)
-      {src, label}, dot -> DOT.edge(dot, src, src <> label, color: ecol, label: label)
-    end)
-    |> DOT.end_dot()
-    |> DOT.to_file(filename)
-    |> to_string()
+    dot =
+      "trie"
+      |> DOT.new_dot()
+      |> DOT.reduce(nodes, fn
+        {"", :initial}, dot -> DOT.node(dot, @root, color: ncol, shape: :point)
+        {name, :normal}, dot -> DOT.node(dot, name, color: ncol, shape: :ellipse)
+        {name, :final}, dot -> DOT.node(dot, name, color: ncol, shape: :doublecircle)
+      end)
+      |> DOT.reduce(edges, fn
+        {"", label}, dot -> DOT.edge(dot, @root, label, color: ecol, label: label)
+        {src, label}, dot -> DOT.edge(dot, src, src <> label, color: ecol, label: label)
+      end)
+      |> DOT.end_dot()
+      |> DOT.to_file(filename)
+      |> to_string()
 
     if render? do
       Render.render_dot(filename, :png)

@@ -3,6 +3,8 @@ defmodule Triex.TriexTest do
 
   use Exa.Dot.Constants
 
+  alias Exa.CharStream
+
   import Triex
 
   doctest Triex
@@ -117,14 +119,14 @@ defmodule Triex.TriexTest do
         "ipsum"
       ])
 
-    toks =
-      @lorem
-      |> String.split(~r{[[:space:],.;:']+}, trim: true)
-      |> Enum.map(&String.downcase/1)
+    toks = CharStream.tokenize(@lorem)
+    result = matches(trie, toks)
 
-    tokrefs = Enum.zip(toks, 1..length(toks))
-    result = matches(trie, tokrefs)
-    assert %{"ipsum" => [2, 101], "nulla" => [36], "nunc" => [16]} == result
+    assert %{
+             "ipsum" => [{1, 9, 9}, {13, 39, 733}],
+             "nulla" => [{6, 3, 268}],
+             "nunc" => [{3, 3, 114}]
+           } == result
   end
 
   test "file" do
@@ -138,7 +140,11 @@ defmodule Triex.TriexTest do
 
     file = in_file("lorem_ipsum")
     result = match_file(trie, file)
-    IO.inspect(result)
-    assert %{"ipsum" => [2, 101], "nulla" => [36], "nunc" => [16]} == result
+
+    assert %{
+             "ipsum" => [{1, 9, 9}, {13, 39, 733}],
+             "nulla" => [{6, 3, 268}],
+             "nunc" => [{3, 3, 114}]
+           } == result
   end
 end
