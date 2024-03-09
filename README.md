@@ -94,24 +94,6 @@ The traversal manages the current prefix match to label nodes.
 The spawning api function collates all the returned info
 and keeps a count of how many nodes have yet to report.
 
-### Future Extensions
-
-1. Use of '.' (1) and '*' (n) wildcards.
-The approach would be to convert the tree into NFA behavior:
-wildcards would propagate match traversals to all outgoing edges,
-and send a tally message back to the executor,
-which waits for all the additional results (like the dump traversal).
-But don't want to implement a full regex (see Myrex sibling project).
-
-2. Suffix optimization for total match (as discussed above).
-
-3. GraphViz DOT output and rendering.
-
-4. File input for matching. 
-   Two options: existing tokenized word search, or future continuous matching.
-   
-5. Partial match and sliding window, optimized by Aho-Corasick.
-
 ## Install
 
 The package can be installed
