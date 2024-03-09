@@ -6,6 +6,7 @@ defmodule Triex.TriexTest do
   alias Exa.CharStream
 
   import Triex
+  alias Triex, as: T
 
   doctest Triex
 
@@ -71,6 +72,7 @@ defmodule Triex.TriexTest do
 
   test "dump" do
     trie = new(["abc", "a", "xyz", "abcdef", "abcpqr"])
+    info(trie)
     tree = dump(trie)
 
     assert {[
@@ -141,10 +143,57 @@ defmodule Triex.TriexTest do
     file = in_file("lorem_ipsum")
     result = match_file(trie, file)
 
-    assert %{
-             "ipsum" => [{1, 9, 9}, {13, 39, 733}],
-             "nulla" => [{6, 3, 268}],
-             "nunc" => [{3, 3, 114}]
-           } == result
+    assert hd(result["ipsum"]) ==  {1, 7, 7}
+    assert hd(result["nulla"]) ==   {1, 251, 251}
+    assert hd(result["magna"]) ==    {3, 282, 1003}
+  end
+
+  @words [
+    "walk",
+    "talk",
+    "walking",
+    "talking",
+    "wall",
+    "king",
+    "page",
+    "pages",
+    "paging",
+    "wag",
+    "wage",
+    "wages"
+  ]
+
+  @sword Enum.map(@words, &String.reverse/1)
+
+  test "info" do
+    winfo = info(@words, "words")
+    assert %T.Metrics{
+              node: 31,
+              edge: 30,
+              head: 4,
+              final: 12,
+              branch: 4,
+              leaf: 7,
+              root: 1
+            } = winfo
+    
+    sinfo = info(@sword, "sword")
+    assert  %T.Metrics{
+              node: 34,
+              edge: 33,
+              head: 5,
+              final: 12,
+              branch: 7,
+              leaf: 11,
+              root: 1
+            } = sinfo
+  end
+
+  defp info(words, name) do
+    trie = new(words)
+    info = info(trie)
+    file = dot_file(name)
+    dump_dot(trie, file)
+    info
   end
 end

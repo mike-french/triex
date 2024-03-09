@@ -19,8 +19,10 @@ defmodule Triex do
   # constants
   # ---------
 
+  # backstop timeout for all receives in asynch execution
   @timeout 5 * 1_000
 
+  # node id for the root in DOT output
   @root "_root_"
 
   # -----
@@ -34,13 +36,71 @@ defmodule Triex do
   # types for tree info returned by 'dump'
   # 'node' is a reserved type, so use vert instead
 
-  @type vert() :: {String.t(), :initial | :normal | :final}
+  @typedoc """
+  Node type for DOT graph output.
+  The type determines the node representation in diagrams.
+
+  There are three types:
+  - initial means the virtual root, there is only 1
+  - normal means any internal (non-leaf) node 
+    that is not a member of the trie
+    so traversals always continue
+  - final means a node that is a member of the trie
+    where traversals may terminate
+    it includes some zero or more internal nodes and _all_ leaf nodes
+  """
+  @type vert_type() :: :initial | :normal | :final
+  @type vert() :: {String.t(), vert_type()}
   @type verts() :: [vert()]
 
   @type edge() :: {String.t(), String.t()}
   @type edges() :: [edge()]
 
   @type tree() :: {verts(), edges()}
+
+  defmodule Metrics do
+    defstruct [:node, :edge, :head, :final, :branch, :leaf, root: 1]
+  end
+
+  @typedoc """
+  Metrics for counts of trie structure:
+  - _node:_ total number of nodes, including the root 
+  - _edge:_ total number of edges
+  - _root:_ the number of root nodes  
+  - _head:_ number of edges leaving the root
+  - _final:_ number of nodes that can return a successful result
+  - _branch:_ number of nodes that have more than one outgoing edge
+  - _leaf:_ number of nodes that do not have any outgoing edges
+            
+  The trie is a tree, so:
+  - there is always exactly 1 root 
+  - the number of edges is always one less 
+    than the number of nodes
+    (all nodes have exactly one parent node,
+     except the root).
+
+  The number of heads is equal to the number of 
+  distinct starting letters of words in the trie.
+
+  The number of final nodes is equal to 
+  the number of words in the trie.
+
+  Branches occur at the root 
+  (empty string is a common prefix for all words)
+  and when there are common prefixes within the trie.
+
+  Leaves correspond to words that are not the prefix 
+  of longer words in the trie - always final nodes.
+  """
+  @type metrics() :: %Metrics{
+          node: E.count1(),
+          edge: E.count(),
+          head: E.count(),
+          final: E.count(),
+          branch: E.count(),
+          leaf: E.count(),
+          root: 1
+        }
 
   # -----------
   # constructor 
@@ -114,8 +174,8 @@ defmodule Triex do
   which will be returned with the string in the result.
   The reference is typically a location in the text source, 
   such as:
-  - character number `n`
-  - `{line, column, ichar}`
+  - character number `nchar`
+  - `{line, column, nchar}`
   - `{filename, line, column}`
   """
   @spec matches(trie(), [{String.t(), any()}]) :: M.mol()
@@ -129,7 +189,7 @@ defmodule Triex do
     match_recv(length(strefs), Mol.new())
   end
 
-  defp match_recv(0, mol), do: Mol.reverse(mol)
+  defp match_recv(0, mol), do: Mol.sort(mol)
 
   defp match_recv(n, mol) do
     receive do
@@ -150,6 +210,56 @@ defmodule Triex do
   # ----
   # dump
   # ----
+
+  @doc """
+  Print structural info from the trie (blocking, parallelized).
+
+  Returns the Metrics (see type definition).
+  """
+  @spec info(trie()) :: %Metrics{}
+  def info({:trie, root} = trie) when is_pid(root) do
+    {nodes, edges} = dump(trie)
+
+    final =
+      Enum.reduce(nodes, 0, fn
+        {_, :final}, f -> f + 1
+        _, f -> f
+      end)
+
+    histo = edges |> Enum.group_by(&elem(&1, 0)) |> Exa.Map.map(&length/1)
+
+    histo =
+      Enum.reduce(nodes, histo, fn
+        {node, _}, h when is_map_key(h, node) -> h
+        {node, _}, h -> Map.put(h, node, 0)
+      end)
+
+    otsih = Exa.Map.invert(histo) |> Exa.Map.map(&length/1)
+
+    branch =
+      Enum.reduce(otsih, 0, fn
+        {nedge, count}, b when nedge > 1 -> b + count
+        _, b -> b
+      end)
+
+    mx = %Metrics{
+      node: length(nodes),
+      edge: length(edges),
+      head: Map.fetch!(histo, ""),
+      final: final,
+      branch: branch,
+      leaf: Map.fetch!(otsih, 0)
+    }
+
+    IO.puts("Trie info:")
+    IO.puts("  node:   #{mx.node}")
+    IO.puts("  edge:   #{mx.edge}")
+    IO.puts("  root:   #{mx.root}")
+    IO.puts("  head:   #{mx.head}")
+    IO.puts("  branch: #{mx.branch}")
+    IO.puts("  final:  #{mx.final}")
+    mx
+  end
 
   @doc """
   Gather structural info from the trie (blocking, parallelized).
