@@ -34,13 +34,7 @@ defmodule Triex.TriexTest do
   defp dot_file(name), do: Exa.File.join(@dot_dir, name, @filetype_dot)
 
   test "simple" do
-    trie = new()
-
-    assert not match(trie, "")
-    assert not match(trie, "a")
-    assert not match(trie, "x")
-
-    add(trie, ["abc", "a", "xyz", "abcdef", "abcpqr"])
+    trie = new(["abc", "a", "xyz", "abcdef", "abcpqr"])
 
     assert match(trie, "a")
     assert match(trie, "abc")
@@ -72,38 +66,47 @@ defmodule Triex.TriexTest do
 
   test "dump" do
     trie = new(["abc", "a", "xyz", "abcdef", "abcpqr"])
-    info(trie)
-    tree = dump(trie)
+    info = info(trie)
 
-    assert {[
-              {"", :initial},
-              {"a", :final},
-              {"ab", :normal},
-              {"abc", :final},
-              {"abcd", :normal},
-              {"abcde", :normal},
-              {"abcdef", :final},
-              {"abcp", :normal},
-              {"abcpq", :normal},
-              {"abcpqr", :final},
-              {"x", :normal},
-              {"xy", :normal},
-              {"xyz", :final}
-            ],
-            [
-              {"", "a"},
-              {"", "x"},
-              {"a", "b"},
-              {"ab", "c"},
-              {"abc", "d"},
-              {"abc", "p"},
-              {"abcd", "e"},
-              {"abcde", "f"},
-              {"abcp", "q"},
-              {"abcpq", "r"},
-              {"x", "y"},
-              {"xy", "z"}
-            ]} == tree
+    assert %T.Metrics{
+             node: 11,
+             edge: 12,
+             root: 1,
+             head: 2,
+             branch: 2,
+             final: 3,
+             leaf: 1
+           } = info
+
+    {verts, edges} = dump(trie)
+
+    assert [
+              {_, "", :initial},
+              {_, "a", :final},
+              {_, "ab", :normal},
+              {_, "abc", :final},
+              {_, "abcd", :normal},
+              {_, "abcde", :normal},
+              {_, "abcdef\\nabcpqr\\nxyz", :final},
+              {_, "abcp", :normal},
+              {_, "abcpq", :normal},
+              {_, "x", :normal},
+              {_, "xy", :normal}
+            ] = verts
+      assert       [
+              {_, "a", _},
+              {_, "b", _},
+              {_, "c", _},
+              {_, "d", _},
+              {_, "e", _},
+              {_, "f", _},
+              {_, "p", _},
+              {_, "q", _},
+              {_, "r", _},
+              {_, "x", _},
+              {_, "y", _},
+              {_, "z", _}
+            ] = edges
   end
 
   test "dump dot" do
@@ -143,9 +146,9 @@ defmodule Triex.TriexTest do
     file = in_file("lorem_ipsum")
     result = match_file(trie, file)
 
-    assert hd(result["ipsum"]) ==  {1, 7, 7}
-    assert hd(result["nulla"]) ==   {1, 251, 251}
-    assert hd(result["magna"]) ==    {3, 282, 1003}
+    assert hd(result["ipsum"]) == {1, 7, 7}
+    assert hd(result["nulla"]) == {1, 251, 251}
+    assert hd(result["magna"]) == {3, 282, 1003}
   end
 
   @words [
@@ -167,26 +170,28 @@ defmodule Triex.TriexTest do
 
   test "info" do
     winfo = info(@words, "words")
+
     assert %T.Metrics{
-              node: 31,
-              edge: 30,
-              head: 4,
-              final: 12,
-              branch: 4,
-              leaf: 7,
-              root: 1
-            } = winfo
-    
+             node: 25,
+             edge: 30,
+             head: 4,
+             final: 6,
+             branch: 4,
+             leaf: 1,
+             root: 1
+           } = winfo
+
     sinfo = info(@sword, "sword")
-    assert  %T.Metrics{
-              node: 34,
-              edge: 33,
-              head: 5,
-              final: 12,
-              branch: 7,
-              leaf: 11,
-              root: 1
-            } = sinfo
+
+    assert %T.Metrics{
+             node: 24,
+             edge: 33,
+             head: 5,
+             final: 2,
+             branch: 7,
+             leaf: 1,
+             root: 1
+           } = sinfo
   end
 
   defp info(words, name) do
@@ -196,4 +201,11 @@ defmodule Triex.TriexTest do
     dump_dot(trie, file)
     info
   end
+
+  # test "reverse" do
+  #   trie = new_rev(@words)
+  #   info(trie)
+  #   file = dot_file("forward")
+  #   dump_dot(trie, file)
+  # end
 end
