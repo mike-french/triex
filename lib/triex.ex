@@ -1,5 +1,8 @@
 defmodule Triex do
   @moduledoc "The Triex trie interface."
+
+  use Triex.Constants
+
   import Exa.Types
   alias Exa.Types, as: E
 
@@ -13,235 +16,79 @@ defmodule Triex do
   alias Exa.Dot.DotWriter, as: DOT
   alias Exa.Dot.Render
 
+  import Triex.Types
+  alias Triex.Types, as: T
+
   alias Triex.Node
-
-  # ---------
-  # constants
-  # ---------
-
-  # backstop timeout for all receives in asynch execution
-  @timeout 5 * 1_000
-
-  # node id for the root in DOT output
-  @root "_root_"
-
-  # -----
-  # types 
-  # -----
-
-  @type trie() :: {:trie, root :: pid(), sink :: pid()}
-  defguard is_trie(t)
-           when is_tuple(t) and tuple_size(t) == 3 and elem(t, 0) == :trie and
-                  is_pid(elem(t, 1)) and is_pid(elem(t, 2))
-
-  # types for tree info returned by 'dump'
-  # 'node' is a reserved type, so use vert instead
-
-  @typedoc """
-  Node type for DOT graph output.
-  The type determines the node representation in diagrams.
-
-  There are three types:
-  - initial means the virtual root, there is only 1
-  - normal means any internal (non-leaf) node 
-    that is not a member of the trie
-    so traversals always continue
-  - final means a node that is a member of the trie
-    where traversals may terminate
-    it includes some zero or more internal nodes and _all_ leaf nodes
-  """
-  @type vert_type() :: :initial | :normal | :final
-  @type vert_id() :: pos_integer()
-  @type vert() :: {vert_id(), vert_label :: String.t(), vert_type()}
-  @type verts() :: [vert()]
-
-  @type edge() :: {src :: vert_id(), edge_label :: String.t(), dst :: vert_id()}
-  @type edges() :: [edge()]
-
-  @type tree() :: {verts(), edges()}
-
-  # suffix map
-  # constructed by add_revs and reverse
-  # then used to construct the forward trie
-  @typep sufmap() :: %{String.t() => pid()}
-
-  defmodule Metrics do
-    defstruct [:node, :edge, :head, :final, :branch, :leaf, root: 1]
-  end
-
-  @typedoc """
-  Metrics for counts of trie structure:
-  - _node:_ total number of nodes, including the root 
-  - _edge:_ total number of edges
-  - _root:_ the number of root nodes  
-  - _head:_ number of edges leaving the root
-  - _final:_ number of nodes that can return a successful result
-  - _branch:_ number of nodes that have more than one outgoing edge
-  - _leaf:_ number of nodes that do not have any outgoing edges
-            
-  The trie is a tree, so:
-  - there is always exactly 1 root 
-  - the number of edges is always one less 
-    than the number of nodes
-    (all nodes have exactly one parent node,
-     except the root).
-
-  The number of heads is equal to the number of 
-  distinct starting letters of words in the trie.
-
-  The number of final nodes is equal to 
-  the number of words in the trie.
-
-  Branches occur at the root 
-  (empty string is a common prefix for all words)
-  and when there are common prefixes within the trie.
-
-  Leaves correspond to words that are not the prefix 
-  of longer words in the trie - always final nodes.
-  """
-  @type metrics() :: %Metrics{
-          node: E.count1(),
-          edge: E.count(),
-          head: E.count(),
-          final: E.count(),
-          branch: E.count(),
-          leaf: E.count(),
-          root: 1
-        }
 
   # -----------
   # constructor 
   # -----------
 
   @doc "Create a new trie with a set of target strings."
-  @spec new([String.t(), ...]) :: trie()
-  def new(strs) when is_list(strs) do
+  @spec new([String.t(), ...]) :: T.trie()
+  def new(strs) when is_nonempty_list(strs) do
+    # root is never final, and never has parent reverse links
+    # sink is always final, has no initial parents, but will have some added
     trie = {:trie, Node.start(false), Node.start(true)}
-    strs = Enum.sort_by(strs, &String.length/1, :desc)
-    adds(trie, strs)
-    trie
+    # sorting words by length ensures long paths to the sink are built first
+    # later prefix words add intermediate final status
+    strs |> Enum.sort_by(&String.length/1, :desc) |> Enum.each(&add_word(trie, &1))
+    # find the common suffixes and share them in the DAG
+    trie |> suffix_build() |> suffix_merge(trie)
   end
 
-  # @doc """
-  # Create a new trie with a set of strings.
-
-  # It is assumed that the trie will not be further extended,
-  # so `add` will not be called after this constructor.
-  # """
-  # @spec new_rev([String.t(), ...]) :: trie()
-  # def new_rev(strs) when is_list(strs) do
-  #   trie = new()
-  #   sufmap = add_revs(trie, strs)
-  #   dispatch(trie, :reverse)
-
-  #   Enum.each(sufmap, fn {suff, pid} ->
-  #     IO.puts("")
-  #     IO.puts(suff)
-  #     t = {:trie, pid}
-  #     info(t)
-  #     tree = dump(t)
-  #     IO.inspect(tree)
-  #   end)
-  #   trie = new()
-  #   add_fors(trie, strs, sufmap)
-  #   trie
-  # end
-
-  # ---
-  # add
-  # ---
-
-  # Add one string to the reversed trie (blocking).
-  # Return the address of the longest non-final suffix.
-  # @spec add_rev(trie(), String.t()) :: :ignore | {String.t(), pid()}
-  # defp add_rev(trie, str) when is_trie(trie) and is_binary(str) do
-  #   dispatch(trie, {:add_rev, str, []})
-
-  #   receive do
-  #     {:add_rev, suf, pid} -> {suf, pid}
-  #     {:add_rev, :ignore} -> :ignore
-  #   after
-  #     @timeout -> raise RuntimeError, message: "Timeout"
-  #   end
-  # end
-
-  # Add a list of strings to the reversed trie (serialized, blocking).
-  # Return the suffix map.
-  # @spec add_revs(trie(), [String.t(), ...]) :: %{String.t() => pid()}
-  # defp add_revs(trie, strs) when is_trie(trie) and is_list(strs) do
-  #   # reverse each individual string
-  #   # sorting shortest to longest makes longer extensions fail faster
-  #   strs = strs 
-  #   |> Enum.map(&String.reverse/1)
-  #   |> Enum.sort_by(&String.length/1)
-  #   # build the reverse trie for suffixes
-  #   {sufmap, n} = Enum.reduce(strs, {%{},0}, fn str, {sufmap,n}=state -> 
-  #     case add_rev(trie, str) do
-  #       # note there can be repeated additions of the same suffix
-  #       # when there is fanout to multiple final nodes
-  #       # so final n will not necessarily be the same 
-  #       # as the number of entries in the map
-  #       {suf, pid} -> {Map.put(sufmap, suf, pid), n+1}
-  #       :ignore -> state
-  #     end      
-  #   end)
-
-  #   IO.inspect(sufmap, label: "sufmap")
-  #   IO.inspect(n, label: "n")
-  #   # --> insert dump here to see the reverse trie <--
-  #   sufmap
-  # end
-
-  # ---
-  # add
-  # ---
-
-  # Add one or more strings to the trie (serialized, blocking).
-  @spec adds(trie(), [String.t(), ...]) :: :ok
-  defp adds(trie, strs) when is_trie(trie) and is_list(strs) do
-    Enum.each(strs, &add(trie, &1))
-  end
-
-  @spec add(trie(), String.t()) :: :ok
-  defp add({:trie, _, sink} = trie, str) when is_trie(trie) and is_binary(str) do
-    dispatch(trie, {:add, str, sink})
+  @spec add_word(T.trie(), String.t()) :: :ok
+  defp add_word({:trie, _, sink} = trie, str) when is_trie(trie) and is_binary(str) do
+    dispatch_root(trie, {:add_word, str, sink})
 
     receive do
-      {:add, :ok} -> :ok
+      {:add_word, :ok} -> :ok
     after
       @timeout -> raise RuntimeError, message: "Timeout"
     end
   end
 
-  # -----------
-  # add forward 
-  # -----------
+  @spec suffix_build(T.trie()) :: T.sufmap()
+  defp suffix_build(trie) do
+    dispatch_sink(trie, :suffix_build)
 
-  # @spec add_fors(trie(), [String.t(), ...], sufmap()) :: :ok
-  # def add_fors(trie, strs, sufmap) when is_trie(trie) and is_list(strs) do
-  #   # build the forward trie 
-  #   Enum.each(strs, fn str ->       add_for(trie, str, sufmap)     end)
-  # end
+    receive do
+      {:suffix_build, sufmap} -> sufmap
+    after
+      @timeout -> raise RuntimeError, message: "Timeout"
+    end
+  end
 
-  # @spec add_for(trie(), String.t(), sufmap()) :: :ok
-  # defp add_for(trie, str, sufmap) when is_trie(trie) and is_binary(str) do
-  #   IO.inspect(str, label: "add_for")
-  #   dispatch(trie, {:add_for, str, sufmap})
-  #   receive do
-  #     {:add_for, :ok} -> :ok
-  #   after
-  #     @timeout -> raise RuntimeError, message: "Timeout"
-  #   end
-  # end
+  @spec suffix_merge(T.sufmap(), T.trie()) :: T.trie()
+  defp suffix_merge(sufmap, trie) do
+    dispatch_sink(trie, {:suffix_merge, sufmap})
+
+    receive do
+      {:suffix_merge, :ok} -> trie
+    after
+      @timeout -> raise RuntimeError, message: "Timeout"
+    end
+  end
+
+  # ----------
+  # destructor 
+  # ----------
+
+  @doc "Delete the process network."
+  @spec teardown(T.trie()) :: :ok
+  def teardown({:trie, root, _sink}) do
+    Process.exit(root, :normal)
+  end
 
   # -----
   # match
   # -----
 
   @doc "Test a complete match of a single string in the trie (blocking)."
-  @spec match(trie(), String.t()) :: bool()
+  @spec match(T.trie(), String.t()) :: bool()
   def match(trie, str) when is_trie(trie) do
-    dispatch(trie, {:match, str})
+    dispatch_root(trie, {:match, str})
 
     receive do
       {:matched, result} -> result
@@ -260,8 +107,12 @@ defmodule Triex do
   - character number `nchar`
   - `{line, column, nchar}`
   - `{filename, line, column}`
+
+  The return value is a Map of Lists,
+  with matched strings as the keys,
+  and a list of references for the matches.
   """
-  @spec matches(trie(), [{String.t(), any()}]) :: M.mol()
+  @spec matches(T.trie(), [{String.t(), any()}]) :: M.mol()
   def matches(trie, strefs) when is_trie(trie) and is_list(strefs) do
     self = self()
 
@@ -284,7 +135,7 @@ defmodule Triex do
   end
 
   @doc "Match all tokens in a file against the trie."
-  @spec match_file(trie(), E.filename()) :: any()
+  @spec match_file(T.trie(), E.filename()) :: M.mol()
   def match_file(trie, filename) when is_filename(filename) do
     toks = filename |> Exa.File.from_file_text() |> CharStream.tokenize()
     matches(trie, toks)
@@ -295,12 +146,13 @@ defmodule Triex do
   # ----
 
   @doc """
-  Print structural info from the trie (blocking, parallelized).
+  Get structural metrics from the trie (blocking, parallelized).
+  Optionally print the result.
 
   Returns the Metrics (see type definition).
   """
-  @spec info(trie()) :: %Metrics{}
-  def info({:trie, root, _sink} = trie) when is_pid(root) do
+  @spec info(T.trie(), bool()) :: %T.Metrics{}
+  def info({:trie, root, _sink} = trie, print? \\ true) when is_pid(root) do
     root_ipid = Exa.Process.ipid(root)
     {nodes, edges} = dump(trie)
 
@@ -328,7 +180,7 @@ defmodule Triex do
         _, b -> b
       end)
 
-    mx = %Metrics{
+    mx = %T.Metrics{
       node: length(nodes),
       edge: length(edges),
       head: Map.fetch!(histo, root_ipid),
@@ -337,6 +189,7 @@ defmodule Triex do
       leaf: 1
     }
 
+    if print? do
     IO.puts("Trie info:")
     IO.puts("  node:   #{mx.node}")
     IO.puts("  edge:   #{mx.edge}")
@@ -344,36 +197,41 @@ defmodule Triex do
     IO.puts("  head:   #{mx.head}")
     IO.puts("  branch: #{mx.branch}")
     IO.puts("  final:  #{mx.final}")
+  end
     mx
   end
 
   @doc """
-  Gather structural info from the trie (blocking, parallelized).
+  Gather structural information about the trie process networke trie 
+  (blocking, parallelized).
   """
-  @spec dump(trie()) :: tree()
+  @spec dump(T.trie()) :: T.graph_info()
   def dump(trie) when is_trie(trie) do
-    dispatch(trie, {:dump, ""})
+    dispatch_root(trie, {:dump, ""})
     {vmol, edges} = dump_recv(1, Mol.new(), [])
 
     verts =
       Enum.reduce(vmol, [], fn {{id, type}, labels}, verts ->
-        label = labels |> Enum.sort() |> Enum.join("\\n")
+        # build multi-line label where paths merge
+        # used for merged suffixes and the sink node
+        label = labels |> Enum.sort() |> Enum.join("\\n") |> Exa.String.summary(30)
         [{id, label, type} | verts]
       end)
 
+    # sort by labels
     {
       Enum.sort_by(verts, &elem(&1, 1)),
       Enum.sort_by(edges, &elem(&1, 1))
     }
   end
 
-  @type vert_mol() :: %{{vert_id(), vert_type()} => [String.t()]}
+  @typep vert_mol() :: %{{T.vert_id(), T.vert_type()} => [String.t()]}
 
   # receive dump messages with node and edge data
   # the count of nodes yet to report starts at 1
   # each node report decrements the count by one
   # but each outgoing edge increments the count by 1
-  @spec dump_recv(non_neg_integer(), vert_mol(), edges()) :: tree()
+  @spec dump_recv(non_neg_integer(), vert_mol(), T.edges()) :: T.graph_info()
 
   defp dump_recv(0, nodes, edges), do: {nodes, edges}
 
@@ -387,8 +245,9 @@ defmodule Triex do
             true -> :normal
           end
 
-        # there will be multiple node entries for the sink node
-        # so keep a list of all the terminal strings
+        # there will be multiple node entries for 
+        # merged suffixes and the sink node
+        # so keep a list of all the strings
         new_nodes = Mol.add(nodes, {id, type}, label)
 
         new_edges =
@@ -408,7 +267,7 @@ defmodule Triex do
   optionally render as PNG 
   (if GraphViz is installed).
   """
-  @spec dump_dot(trie(), E.filename(), bool()) :: String.t()
+  @spec dump_dot(T.trie(), E.filename(), bool()) :: String.t()
   def dump_dot(trie, filename, render? \\ true) when is_trie(trie) and is_filename(filename) do
     {nodes, edges} = dump(trie)
 
@@ -446,8 +305,13 @@ defmodule Triex do
   # private functions
   # -----------------
 
-  # send a message to the root node
+  # send a message to the root node for forward traversal
   # this self process is the executor to receive replies
-  @spec dispatch(trie(), any()) :: any()
-  defp dispatch({:trie, root, _sink}, msg), do: send(root, {self(), msg})
+  @spec dispatch_root(T.trie(), any()) :: any()
+  defp dispatch_root({:trie, root, _sink}, msg), do: send(root, {self(), msg})
+
+  # send a message to the sink node for reverse traversal
+  # this self process is the executor to receive replies
+  @spec dispatch_sink(T.trie(), any()) :: any()
+  defp dispatch_sink({:trie, _root, sink}, msg), do: send(sink, {self(), msg})
 end

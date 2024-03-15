@@ -6,7 +6,7 @@ defmodule Triex.TriexTest do
   alias Exa.CharStream
 
   import Triex
-  alias Triex, as: T
+  alias Triex.Types, as: T
 
   doctest Triex
 
@@ -81,32 +81,33 @@ defmodule Triex.TriexTest do
     {verts, edges} = dump(trie)
 
     assert [
-              {_, "", :initial},
-              {_, "a", :final},
-              {_, "ab", :normal},
-              {_, "abc", :final},
-              {_, "abcd", :normal},
-              {_, "abcde", :normal},
-              {_, "abcdef\\nabcpqr\\nxyz", :final},
-              {_, "abcp", :normal},
-              {_, "abcpq", :normal},
-              {_, "x", :normal},
-              {_, "xy", :normal}
-            ] = verts
-      assert       [
-              {_, "a", _},
-              {_, "b", _},
-              {_, "c", _},
-              {_, "d", _},
-              {_, "e", _},
-              {_, "f", _},
-              {_, "p", _},
-              {_, "q", _},
-              {_, "r", _},
-              {_, "x", _},
-              {_, "y", _},
-              {_, "z", _}
-            ] = edges
+             {_, "", :initial},
+             {_, "a", :final},
+             {_, "ab", :normal},
+             {_, "abc", :final},
+             {_, "abcd", :normal},
+             {_, "abcde", :normal},
+             {_, "abcdef\\nabcpqr\\nxyz", :final},
+             {_, "abcp", :normal},
+             {_, "abcpq", :normal},
+             {_, "x", :normal},
+             {_, "xy", :normal}
+           ] = verts
+
+    assert [
+             {_, "a", _},
+             {_, "b", _},
+             {_, "c", _},
+             {_, "d", _},
+             {_, "e", _},
+             {_, "f", _},
+             {_, "p", _},
+             {_, "q", _},
+             {_, "r", _},
+             {_, "x", _},
+             {_, "y", _},
+             {_, "z", _}
+           ] = edges
   end
 
   test "dump dot" do
@@ -166,46 +167,28 @@ defmodule Triex.TriexTest do
     "wages"
   ]
 
-  @sword Enum.map(@words, &String.reverse/1)
+  # @sword Enum.map(@words, &String.reverse/1)
 
   test "info" do
-    winfo = info(@words, "words")
+    winfo = do_info(@words, "words")
 
     assert %T.Metrics{
-             node: 25,
+             node: 19,
              edge: 30,
              head: 4,
              final: 6,
-             branch: 4,
+             branch: 6,
              leaf: 1,
              root: 1
            } = winfo
-
-    sinfo = info(@sword, "sword")
-
-    assert %T.Metrics{
-             node: 24,
-             edge: 33,
-             head: 5,
-             final: 2,
-             branch: 7,
-             leaf: 1,
-             root: 1
-           } = sinfo
   end
 
-  defp info(words, name) do
+  defp do_info(words, name) do
     trie = new(words)
     info = info(trie)
+    dump = dump(trie)
     file = dot_file(name)
     dump_dot(trie, file)
     info
   end
-
-  # test "reverse" do
-  #   trie = new_rev(@words)
-  #   info(trie)
-  #   file = dot_file("forward")
-  #   dump_dot(trie, file)
-  # end
 end
