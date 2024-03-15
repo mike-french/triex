@@ -50,6 +50,8 @@ defmodule Triex.TriexTest do
     assert not match(trie, "abcd")
     assert not match(trie, "abcdxyz")
     assert not match(trie, "xyzabc")
+
+    teardown(trie)
   end
 
   test "unicode" do
@@ -62,6 +64,8 @@ defmodule Triex.TriexTest do
     assert not match(trie, "好久")
     assert not match(trie, "龙")
     assert not match(trie, "黑龙江")
+
+    teardown(trie)
   end
 
   test "dump" do
@@ -108,12 +112,15 @@ defmodule Triex.TriexTest do
              {_, "y", _},
              {_, "z", _}
            ] = edges
+
+    teardown(trie)
   end
 
   test "dump dot" do
     file = dot_file("abc")
     trie = new(["abc", "a", "xyz", "abcdef", "abcpqr"])
     dump_dot(trie, file)
+    teardown(trie)
   end
 
   test "matches" do
@@ -133,6 +140,8 @@ defmodule Triex.TriexTest do
              "nulla" => [{6, 3, 268}],
              "nunc" => [{3, 3, 114}]
            } == result
+
+    teardown(trie)
   end
 
   test "file" do
@@ -150,6 +159,8 @@ defmodule Triex.TriexTest do
     assert hd(result["ipsum"]) == {1, 7, 7}
     assert hd(result["nulla"]) == {1, 251, 251}
     assert hd(result["magna"]) == {3, 282, 1003}
+
+    teardown(trie)
   end
 
   @words [
@@ -167,17 +178,15 @@ defmodule Triex.TriexTest do
     "wages"
   ]
 
-  # @sword Enum.map(@words, &String.reverse/1)
-
   test "info" do
     winfo = do_info(@words, "words")
 
     assert %T.Metrics{
              node: 19,
-             edge: 30,
+             edge: 24,
              head: 4,
              final: 6,
-             branch: 6,
+             branch: 4,
              leaf: 1,
              root: 1
            } = winfo
@@ -186,9 +195,10 @@ defmodule Triex.TriexTest do
   defp do_info(words, name) do
     trie = new(words)
     info = info(trie)
-    dump = dump(trie)
+    dump(trie)
     file = dot_file(name)
     dump_dot(trie, file)
+    teardown(trie)
     info
   end
 end

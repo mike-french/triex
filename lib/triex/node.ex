@@ -1,5 +1,6 @@
 defmodule Triex.Node do
   @moduledoc "The processing node of a trie."
+
   use Triex.Constants
 
   alias Exa.Std.Mol
@@ -17,9 +18,7 @@ defmodule Triex.Node do
   # incoming edges are one-many character to pid list (MoL)
   @typep revmap() :: %{char() => [pid(), ...]}
 
-  defguard is_root(final?, _, revedges) when not final? and revedges == %{}
-
-  defguard is_sink(final?, edges, _) when final? and edges == %{}
+  defguardp is_sink(final?, edges, _) when final? and edges == %{}
 
   # ----------------
   # public functions
@@ -28,21 +27,26 @@ defmodule Triex.Node do
   @doc """
   Start the process with a terminal flag, 
   but without any parent reverse edge.
-
-  In practice this will only be used for root and sink.
+  Only used for root and sink.
   """
   @spec start(bool()) :: pid()
   def start(final?) do
-    spawn_link(__MODULE__, :node, [final?, %{}, %{}])
+    spawn_link(__MODULE__, :init, [final?, %{}])
   end
 
   @doc """
-  Start the process with a terminal flag 
+  Start an internal process with a terminal flag 
   and a parent reference.
   """
   @spec start(bool(), revedge()) :: pid()
   def start(final?, {c, pid}) do
-    spawn_link(__MODULE__, :node, [final?, %{}, Mol.new() |> Mol.add(c, pid)])
+    spawn_link(__MODULE__, :init, [final?, Mol.new() |> Mol.add(c, pid)])
+  end
+
+  @spec init(bool(), revmap()) :: no_return()
+  def init(final?, revedges) do
+    # Process.flag(:trap_exit, true)
+    node(final?, %{}, revedges)
   end
 
   # ---------
@@ -50,7 +54,7 @@ defmodule Triex.Node do
   # ---------
 
   @spec node(bool(), forward :: edgemap(), reverse :: revmap()) :: no_return()
-  def node(final?, edges, revedges) do
+  defp node(final?, edges, revedges) do
     receive do
       # match ----------
 
@@ -184,10 +188,10 @@ defmodule Triex.Node do
               # replace the old forward path with the shared suffix
               # kill the old forward node
               oldpid = Map.fetch!(edges, c)
-              Process.exit(oldpid, :normal)
+              send(oldpid, {:EXIT, :suffix})
               # reference the shared suffix
               sufpid = Map.fetch!(sufmap, tail)
-              Map.put(edges, c, sufpid)
+              Map.replace!(edges, c, sufpid)
 
             length(tail) == 1 ->
               # initial step up from sink is never in the suffix map
@@ -216,6 +220,13 @@ defmodule Triex.Node do
         Enum.each(edges, fn {c, pid} ->
           send(pid, {exec, {:dump, <<str::binary, c::utf8>>}})
         end)
+
+      {:EXIT, :suffix} ->
+        exit(:normal)
+
+      {:EXIT, :teardown} = msg ->
+        Enum.each(edges, fn {_, pid} -> send(pid, msg) end)
+        exit(:normal)
 
       any ->
         throw({:unhandled_message, [__MODULE__, any]})

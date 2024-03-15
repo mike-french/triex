@@ -75,17 +75,17 @@ defmodule Triex do
   # destructor 
   # ----------
 
-  @doc "Delete the process network."
-  @spec teardown(T.trie()) :: true
+  @doc "Delete the triex process network."
+  @spec teardown(trie :: T.trie()) :: :ok
   def teardown({:trie, root, _sink}) do
-    Process.exit(root, :normal)
+    send(root, {:EXIT, :teardown})
   end
 
   # -----
   # match
   # -----
 
-  @doc "Test a complete match of a single string in the trie (blocking)."
+  @doc "Test a complete match of a single string in the triex (blocking)."
   @spec match(T.trie(), String.t()) :: bool()
   def match(trie, str) when is_trie(trie) do
     dispatch_root(trie, {:match, str})
@@ -98,14 +98,14 @@ defmodule Triex do
   end
 
   @doc """
-  Test multiple words for a complete match in the trie (parallel).
+  Test multiple words for a complete match in the triex (parallel).
 
   The input strings are paired with an opaque application reference,
   which will be returned with the string in the result.
   The reference is typically a location in the text source, 
   such as:
   - character number `nchar`
-  - `{line, column, nchar}`
+  - `{line, column}`
   - `{filename, line, column}`
 
   The return value is a Map of Lists,
@@ -134,7 +134,18 @@ defmodule Triex do
     end
   end
 
-  @doc "Match all tokens in a file against the trie."
+  @doc """
+  Match all tokens in a file against the triex.
+
+  The return value is a Map of Lists,
+  with matched strings as the keys,
+  and a list of references for the matches.
+
+  The references are in the form of 
+  See Exa.CharStream for the tokenization 
+  and format of the file address references.
+
+  """
   @spec match_file(T.trie(), E.filename()) :: M.mol()
   def match_file(trie, filename) when is_filename(filename) do
     toks = filename |> Exa.File.from_file_text() |> CharStream.tokenize()
@@ -146,7 +157,7 @@ defmodule Triex do
   # ----
 
   @doc """
-  Get structural metrics from the trie (blocking, parallelized).
+  Get structural metrics from the triex (blocking, parallelized).
   Optionally print the result.
 
   Returns the Metrics (see type definition).
@@ -203,27 +214,13 @@ defmodule Triex do
   end
 
   @doc """
-  Gather structural information about the trie process networke trie 
+  Gather structural information about the triex process network
   (blocking, parallelized).
   """
   @spec dump(T.trie()) :: T.graph_info()
   def dump(trie) when is_trie(trie) do
     dispatch_root(trie, {:dump, ""})
-    {vmol, edges} = dump_recv(1, Mol.new(), [])
-
-    verts =
-      Enum.reduce(vmol, [], fn {{id, type}, labels}, verts ->
-        # build multi-line label where paths merge
-        # used for merged suffixes and the sink node
-        label = labels |> Enum.sort() |> Enum.join("\\n") |> Exa.String.summary(30)
-        [{id, label, type} | verts]
-      end)
-
-    # sort by labels
-    {
-      Enum.sort_by(verts, &elem(&1, 1)),
-      Enum.sort_by(edges, &elem(&1, 1))
-    }
+    dump_recv(1, Mol.new(), MapSet.new())
   end
 
   @typep vert_mol() :: %{{T.vert_id(), T.vert_type()} => [String.t()]}
@@ -232,11 +229,24 @@ defmodule Triex do
   # the count of nodes yet to report starts at 1
   # each node report decrements the count by one
   # but each outgoing edge increments the count by 1
-  @spec dump_recv(non_neg_integer(), vert_mol(), T.edges()) :: T.graph_info()
+  @spec dump_recv(non_neg_integer(), vert_mol(), MapSet.t()) :: T.graph_info()
 
-  defp dump_recv(0, nodes, edges), do: {nodes, edges}
+  defp dump_recv(0, nodemap, edgeset) do
+    # build multi-line label where paths merge
+    # used for merged suffixes and the sink node
+    verts =
+      Enum.reduce(nodemap, [], fn {{id, type}, labels}, verts ->
+        label = labels |> Enum.sort() |> Enum.join("\\n") |> Exa.String.summary(30)
+        [{id, label, type} | verts]
+      end)
 
-  defp dump_recv(n, nodes, edges) do
+    {
+      verts |> Enum.sort_by(&elem(&1, 1)),
+      edgeset |> MapSet.to_list() |> Enum.sort_by(&elem(&1, 1))
+    }
+  end
+
+  defp dump_recv(n, nodes, edgeset) do
     receive do
       {:node, id, label, final?, out_edges} ->
         type =
@@ -251,19 +261,19 @@ defmodule Triex do
         # so keep a list of all the strings
         new_nodes = Mol.add(nodes, {id, type}, label)
 
-        new_edges =
-          Enum.reduce(out_edges, edges, fn {c, pid}, edges ->
-            [{id, <<c::utf8>>, Exa.Process.ipid(pid)} | edges]
+        new_edgeset =
+          Enum.reduce(out_edges, edgeset, fn {c, pid}, edgeset ->
+            MapSet.put(edgeset, {id, <<c::utf8>>, Exa.Process.ipid(pid)})
           end)
 
-        dump_recv(n - 1 + map_size(out_edges), new_nodes, new_edges)
+        dump_recv(n - 1 + map_size(out_edges), new_nodes, new_edgeset)
     after
       @timeout -> raise RuntimeError, message: "Timeout"
     end
   end
 
   @doc """
-  Gather structural info from the trie,
+  Gather structural info from the triex,
   convert to GraphViz DOT format and 
   optionally render as PNG 
   (if GraphViz is installed).

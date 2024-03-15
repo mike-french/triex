@@ -126,7 +126,7 @@ by adding `triex` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:triex, git: "https://github.com/mike-french/triex.git", tag: "1.0.0"}
+    {:triex, git: "https://github.com/mike-french/triex.git", tag: "1.1.0"}
   ]
 end
 ```
