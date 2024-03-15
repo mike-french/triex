@@ -1,5 +1,5 @@
 defmodule Triex.Constants do
-   @moduledoc "Constants for Triex."
+  @moduledoc "Constants for Triex."
 
   defmacro __using__(_) do
     quote do

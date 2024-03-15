@@ -126,32 +126,32 @@ defmodule Triex.Node do
 
         send(exec, {:suffix_build, sufmap})
 
-      {sink, {:suffix_build, tail, sufmap}} when 
-          final? or map_size(edges) > 1 or map_size(revedges) == 0 ->
-          # hit a final node or branching node, so cancel all suffixes
-          # remove the tail and all longer suffixes with the same tail
-          liat = Enum.reverse(tail)
+      {sink, {:suffix_build, tail, sufmap}}
+      when final? or map_size(edges) > 1 or map_size(revedges) == 0 ->
+        # hit a final node or branching node, so cancel all suffixes
+        # remove the tail and all longer suffixes with the same tail
+        liat = Enum.reverse(tail)
 
-          new_sufmap =
-            Enum.reduce(Map.keys(sufmap), sufmap, fn key, sufmap ->
-              if length(key) > length(tail) and
-                   List.starts_with?(Enum.reverse(key), liat) do
-                Map.delete(sufmap, key)
-              else
-                sufmap
-              end
-            end)
+        new_sufmap =
+          Enum.reduce(Map.keys(sufmap), sufmap, fn key, sufmap ->
+            if length(key) > length(tail) and
+                 List.starts_with?(Enum.reverse(key), liat) do
+              Map.delete(sufmap, key)
+            else
+              sufmap
+            end
+          end)
 
-          # terminate reverse traversal
-          send(sink, {:suffix_build, new_sufmap})
+        # terminate reverse traversal
+        send(sink, {:suffix_build, new_sufmap})
 
-     {sink, {:suffix_build, tail, sufmap}} ->
-          # one reverse edge
-          [{r, [next_pid]}] = Map.to_list(revedges)
-          new_tail = [r | tail]
-          # propagate non-final linear chain
-          new_sufmap = Map.put(sufmap, new_tail, self())
-          send(next_pid, {sink, {:suffix_build, new_tail, new_sufmap}})
+      {sink, {:suffix_build, tail, sufmap}} ->
+        # one reverse edge
+        [{r, [next_pid]}] = Map.to_list(revedges)
+        new_tail = [r | tail]
+        # propagate non-final linear chain
+        new_sufmap = Map.put(sufmap, new_tail, self())
+        send(next_pid, {sink, {:suffix_build, new_tail, new_sufmap}})
 
       # merge suffix 
 
@@ -159,49 +159,52 @@ defmodule Triex.Node do
         # start reverse traversal in the sink
         sink = self()
 
-          Enum.each(revedges, fn {c, pids} ->
-            tail = [c]
+        Enum.each(revedges, fn {c, pids} ->
+          tail = [c]
 
-            Enum.each(pids, fn pid ->
-              send(pid, {sink, {:suffix_merge, tail, sufmap}})
+          Enum.each(pids, fn pid ->
+            send(pid, {sink, {:suffix_merge, tail, sufmap}})
 
-              receive do
-                {:suffix_merge, :ok} -> :ok
-              after
-                @timeout -> raise RuntimeError, message: "Timeout"
-              end
-            end)
+            receive do
+              {:suffix_merge, :ok} -> :ok
+            after
+              @timeout -> raise RuntimeError, message: "Timeout"
+            end
           end)
+        end)
 
         send(exec, {:suffix_merge, :ok})
 
-     {sink, {:suffix_merge, [c | _] = tail, sufmap}} ->
-      # match tail and test for reuse of the same suffix 
-      new_edges = cond do
-        is_map_key(sufmap, tail) and
-                   Map.fetch!(sufmap, tail) != Map.fetch!(edges, c) ->
-            # replace the old forward path with the shared suffix
-            # kill the old forward node
-            oldpid = Map.fetch!(edges, c)
-            Process.exit(oldpid, :normal)
-            # reference the shared suffix
-            sufpid = Map.fetch!(sufmap, tail)
-            Map.put(edges, c, sufpid)
-          length(tail) == 1 -> 
-            # initial step up from sink is never in the suffix map
-            # but always continue traversal
-            edges
-          true -> 
-            # no suffix match, terminate traversal
-            send(sink, {:suffix_merge, :ok})
-            node(final?, edges, revedges)
-      end
+      {sink, {:suffix_merge, [c | _] = tail, sufmap}} ->
+        # match tail and test for reuse of the same suffix 
+        new_edges =
+          cond do
+            is_map_key(sufmap, tail) and
+                Map.fetch!(sufmap, tail) != Map.fetch!(edges, c) ->
+              # replace the old forward path with the shared suffix
+              # kill the old forward node
+              oldpid = Map.fetch!(edges, c)
+              Process.exit(oldpid, :normal)
+              # reference the shared suffix
+              sufpid = Map.fetch!(sufmap, tail)
+              Map.put(edges, c, sufpid)
 
-      # continue traversal up to parent
-      [{r, [parent]}] = Map.to_list(revedges)
-      new_tail = [r | tail]
-      send(parent, {sink, {:suffix_merge, new_tail, sufmap}})
-      node(final?, new_edges, revedges)
+            length(tail) == 1 ->
+              # initial step up from sink is never in the suffix map
+              # but always continue traversal
+              edges
+
+            true ->
+              # no suffix match, terminate traversal
+              send(sink, {:suffix_merge, :ok})
+              node(final?, edges, revedges)
+          end
+
+        # continue traversal up to parent
+        [{r, [parent]}] = Map.to_list(revedges)
+        new_tail = [r | tail]
+        send(parent, {sink, {:suffix_merge, new_tail, sufmap}})
+        node(final?, new_edges, revedges)
 
       # dump ----------
       # output metrics and diagrams

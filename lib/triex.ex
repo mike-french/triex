@@ -76,7 +76,7 @@ defmodule Triex do
   # ----------
 
   @doc "Delete the process network."
-  @spec teardown(T.trie()) :: :ok
+  @spec teardown(T.trie()) :: true
   def teardown({:trie, root, _sink}) do
     Process.exit(root, :normal)
   end
@@ -190,14 +190,15 @@ defmodule Triex do
     }
 
     if print? do
-    IO.puts("Trie info:")
-    IO.puts("  node:   #{mx.node}")
-    IO.puts("  edge:   #{mx.edge}")
-    IO.puts("  root:   #{mx.root}")
-    IO.puts("  head:   #{mx.head}")
-    IO.puts("  branch: #{mx.branch}")
-    IO.puts("  final:  #{mx.final}")
-  end
+      IO.puts("Trie info:")
+      IO.puts("  node:   #{mx.node}")
+      IO.puts("  edge:   #{mx.edge}")
+      IO.puts("  root:   #{mx.root}")
+      IO.puts("  head:   #{mx.head}")
+      IO.puts("  branch: #{mx.branch}")
+      IO.puts("  final:  #{mx.final}")
+    end
+
     mx
   end
 

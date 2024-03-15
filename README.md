@@ -1,78 +1,100 @@
 ## Triex
 
-String trie lookup using tree of processes (Elixir).
+String _trie_ matching using a ~~tree~~ DAG of processes (Elixir).
 
-## Design
+Triex provides full-string match of a word against a set of target tokens.
+It does not implement sliding continuous search (grep, KMP, Aho-Corasick).
 
-The trie is built as a tree of independent processes.
-
-The implementation is based on the idea of _Process Oriented Programming:_ 
+Triex is based on the idea of _Process Oriented Programming:_ 
 * Algorithms are implemented using a fine-grain directed graph of 
   independent share-nothing processes.
 * Processes communicate asynchronously by passing messages. 
 * Process networks naturally run in parallel.
 
+Usually a _trie_ is built as a prefix _tree_ (hence, the name).
+
+Triex does not store partial match values in the nodes,
+so it can merge leaves into a single sink node, 
+and share paths for some common suffixes
+(i.e. single-link chains ending at the sink node, 
+which do not contain intermediate final matches).
+
+_Triex builds a Directed Acyclic Graph (DAG) of process nodes._
+
+Once the Triex process network is built, 
+it runs asynchronously.
+There can be many concurrent traversals of the network,
+because all traversal state is held in the messages,
+not stored in the process nodes.
+Many input strings can be matched in parallel
+
+_Triex_ match execution will naturally use all cores.
+
+## Design
+
+The trie is built as a DAG of independent processes.
+
 Each process (node) has:
 - Flag to indicate if it is a matching terminal state.
 - Map of matching characters to the next (child) process 
-  in the tree (outgoing edges).
+  in the DAG (outgoing edges).
+- A list of reverse edges back to parents 
+  (only used during construction)
   
 Note that partial/final strings are not stored in the nodes:
 nodes do not know the string or prefix that they match.
+This allows the same node to match multiple input strings
+but merging suffixes into a DAG structure.
 
 Traversals of the tree are implemented as a sequence of messages
-propagating down one path within the tree.
+propagating down one path within the DAG.
 
-There are two main kinds of traversals: _add_ and _match._
+There are two phases of construction and use. 
+- Construction has three types of traversal:
+   - Traverse from the root to add all strings to form a tree
+     of processes, but joined into a single final _sink_ node.
+   - Traverse backwrds from the final sink node to find common suffixes.
+   - Traverse backwards from the sink to merge common suffixes.
+- Match a target string by traversing from the root.
 
-The traversal messages contain a source/target string.
-At each step of the traversal, 
-one character is consumed from the head of the string.
+## Example
 
-Each addition or match is a single traversal, 
-so it cannot be parallelized.
-Additions are blocking synchronous traversals.
-However, multiple match traversals can propagate concurrently,
-because all state is in the traversal messages, not in the nodes.
+Here is an example network for the target words:
+"walk", "talk", "walking", "talking", "wall", "king",
+"page", "pages", "paging", "wag", "wage", "wages".
 
-### Optimization Note
+The basic tree structure of a standard trie would be:
 
-All leaf nodes are matching terminal nodes with no onward edges.
-So they are all equivalent, and could be implemented by a single process,
-with convergence of the tree (DAG).
-But that would make it difficult to extend the tree
-by adding new strings to the trie.
-One solution would be to order additions from longest to shortest,
-so there is never extension beyond an existing termination
-(assuming all accepted strings are known in advance).
+![Triex tree](./diagrams/tree_words.png)
 
-In fact, all common suffices without intermediate termination, 
-could be factored out and reused.
-This would reduce the process count for common parts of speech
-(e.g. in English "-ed", "-ing", "-ly").
-However there is no obvious and efficient bidirectional
-incremental way to build the trie, so it would have to be implemented 
-as a compilation post-process after all accepted strings have been added.
+The triex DAG with merged sink node and common suffixes is:
+
+![Triex DAG](./diagrams/dag_words.png)
 
 ## API
 
-There are 4 public functions:
-- `new`: build a new empty trie
-- `add`: add one or more strings to the trie
-- `match`: test if a complete string is in the trie
-- `dump`: returns the tree structure 
+There are only four areas of functionality:
+- `new`: build a new triex for a list of target strings
+- `match`, `matches`, `match_file`: match one or more tokens against the triex
+- `info`, `dump`, `dump_dot`: find metrics for the network and 
+   convert structure to GraphViz DOT format for rendering
+- `teardown`: destroy the triex process network
   
-`new` creates a new trie containing a root node (process).
-There is a convenience version that accepts 
-a list of strings to add to the new trie.
+`new` creates a new trie containing root and sink nodes (processes)
+and adds a list of strings to the network. 
+It calls the internal `add` function...
 
-`add` adds one or more new strings to the trie. 
-The api function initiates an _add_ traversal of the tree for each new string. 
+`add` initiates an _add_ traversal from the root of the triex.  
 The traversal passes through existing nodes that match a prefix of the new string.
 If there is no onward path, new child nodes are spawned,
 and the traversal continues (like laying the track in front of the train).
-When the new string is consumed,
+When the input string is consumed,
 the last node is marked as a terminal _success_ node.
+
+After all strings are added, there are two further traversals,
+starting at the final sink node:
+- find the common suffixes
+- merge processes to reuse shared suffix process chains
 
 `match` tests if a complete string is included in the trie.
 The api function initiates a _match_ traversal of the tree. 
@@ -85,8 +107,10 @@ The result is failure (false) if either:
 
 `dump` returns structure informtion for the node processes
 and edge transitions in the trie. 
-The nodes and edges can be reconstructed into the tree state machine.
-(TODO - GraphViz DOT conversion and rendering).
+The nodes and edges can be reconstructed into the DAG state machine,
+converted to GraphViz DOT format and optional rendering to a PNG image 
+(if GraphViz is installed).
+
 The dump traversal starts from the root.
 Each node returns its info, then propagates the `dump` message
 to _all_ its child processes along outgoing edges (fan-out).

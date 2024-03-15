@@ -1,6 +1,6 @@
 defmodule Triex.Types do
   @moduledoc "Types for Triex."
-  
+
   alias Exa.Types, as: E
 
   # -----
@@ -44,7 +44,7 @@ defmodule Triex.Types do
   @type sufmap() :: %{charlist() => pid()}
 
   defmodule Metrics do
-     @moduledoc "Metrics for counts of trie structure nodes and edges:"
+    @moduledoc "Metrics for counts of trie structure nodes and edges:"
     defstruct [:node, :edge, :head, :final, :branch, :leaf, root: 1]
   end
 
@@ -87,5 +87,4 @@ defmodule Triex.Types do
           leaf: E.count(),
           root: 1
         }
-
-  end
+end
