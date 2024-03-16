@@ -70,13 +70,13 @@ Here is an example network for the target words:
 The basic tree structure of a standard trie would be
 (click to expand):
 
-[![Triex tree](./diagrams/tree_words_small.png)]
+[![Triex tree](./diagrams/tree_words_small.png)]]
 (./diagrams/tree_words.png)
 
 The triex DAG with merged sink node and common suffixes is
 (click to expand):
 
-[![Triex DAG](./diagrams/dag_words_small.png)]
+[![Triex DAG](./diagrams/dag_words_small.png)]]
 (./diagrams/dag_words.png)
 
 The DAG does not reduce the time to make a match,
