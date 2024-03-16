@@ -46,6 +46,9 @@ nodes do not know the string or prefix that they match.
 This allows the same node to match multiple input strings
 but merging suffixes into a DAG structure.
 
+(The list of reverse edges could be removed after construction,
+to reduce the memory usage during _match_ traversals.)
+
 Traversals of the tree are implemented as a sequence of messages
 propagating down one path within the DAG.
 
@@ -60,16 +63,26 @@ There are two phases of construction and use.
 ## Example
 
 Here is an example network for the target words:
+
 "walk", "talk", "walking", "talking", "wall", "king",
 "page", "pages", "paging", "wag", "wage", "wages".
 
-The basic tree structure of a standard trie would be:
+The basic tree structure of a standard trie would be
+(click to expand):
 
-![Triex tree](./diagrams/tree_words.png)
+[![Triex tree](./diagrams/tree_words_small.png)]
+(./diagrams/tree_words.png)
 
-The triex DAG with merged sink node and common suffixes is:
+The triex DAG with merged sink node and common suffixes is
+(click to expand):
 
-![Triex DAG](./diagrams/dag_words.png)
+[![Triex DAG](./diagrams/dag_words_small.png)]
+(./diagrams/dag_words.png)
+
+The DAG does not reduce the time to make a match,
+because the same number of edge traversals are always needed,
+but it does reduce the total memory usage of the network,
+by reducing the number of processes.
 
 ## API
 
