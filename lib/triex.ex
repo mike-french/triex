@@ -22,24 +22,35 @@ defmodule Triex do
   alias Triex.Node
 
   # -----------
+  # local types 
+  # -----------
+
+  # trie structure used during construction
+  @typep btrie() :: {:triex, root :: pid(), sink :: pid()}
+
+  # suffix map used during construction
+  @typep sufmap() :: %{charlist() => pid()}
+
+  # -----------
   # constructor 
   # -----------
 
   @doc "Create a new trie with a set of target strings."
-  @spec new([String.t(), ...]) :: T.trie()
-  def new(strs) when is_nonempty_list(strs) do
+  @spec start([String.t(), ...]) :: T.trie()
+  def start(strs) when is_nonempty_list(strs) do
     # root is never final, and never has parent reverse links
     # sink is always final, has no initial parents, but will have some added
-    trie = {:trie, Node.start(false), Node.start(true)}
+    root = Node.start(false)
+    btrie = {:triex, root, Node.start(true)}
     # sorting words by length ensures long paths to the sink are built first
     # later prefix words add intermediate final status
-    strs |> Enum.sort_by(&String.length/1, :desc) |> Enum.each(&add_word(trie, &1))
+    strs |> Enum.sort_by(&String.length/1, :desc) |> Enum.each(&add_word(btrie, &1))
     # find the common suffixes and share them in the DAG
-    trie |> suffix_build() |> suffix_merge(trie)
+    btrie |> suffix_build() |> suffix_merge(btrie) |> freeze()
   end
 
-  @spec add_word(T.trie(), String.t()) :: :ok
-  defp add_word({:trie, _, sink} = trie, str) when is_trie(trie) and is_binary(str) do
+  @spec add_word(btrie(), String.t()) :: :ok
+  defp add_word({:triex, _, sink} = trie, str) when is_binary(str) do
     dispatch_root(trie, {:add_word, str, sink})
 
     receive do
@@ -49,7 +60,7 @@ defmodule Triex do
     end
   end
 
-  @spec suffix_build(T.trie()) :: T.sufmap()
+  @spec suffix_build(btrie()) :: sufmap()
   defp suffix_build(trie) do
     dispatch_sink(trie, :suffix_build)
 
@@ -60,7 +71,7 @@ defmodule Triex do
     end
   end
 
-  @spec suffix_merge(T.sufmap(), T.trie()) :: T.trie()
+  @spec suffix_merge(sufmap(), btrie()) :: btrie()
   defp suffix_merge(sufmap, trie) do
     dispatch_sink(trie, {:suffix_merge, sufmap})
 
@@ -71,14 +82,44 @@ defmodule Triex do
     end
   end
 
+  # convert add build mode into runtime match mode
+  @spec freeze(trie :: btrie()) :: T.trie()
+  defp freeze({:triex, root, _} = trie) do
+    dispatch_root(trie, :freeze)
+    freeze_recv(1)
+    {:triex, root}
+  end
+
+  defp freeze_recv(0), do: :ok
+
+  defp freeze_recv(n) do
+    receive do
+      {:freeze, nedge} -> freeze_recv(n - 1 + nedge)
+    after
+      @timeout -> raise RuntimeError, message: "Timeout"
+    end
+  end
+
   # ----------
   # destructor 
   # ----------
 
-  @doc "Delete the triex process network."
-  @spec teardown(trie :: T.trie()) :: :ok
-  def teardown({:trie, root, _sink}) do
-    send(root, {:EXIT, :teardown})
+  @doc "Stop and delete the triex process network."
+  @spec stop(trie :: T.trie()) :: :ok
+  def stop(trie) when is_trie(trie) do
+    nnodes = nnodes(trie)
+    dispatch_root(trie, {:EXIT, :teardown})
+    teardown_recv(nnodes)
+  end
+
+  defp teardown_recv(0), do: :ok
+
+  defp teardown_recv(n) do
+    receive do
+      {:teardown, :ok} -> teardown_recv(n - 1)
+    after
+      @timeout -> raise RuntimeError, message: "Timeout"
+    end
   end
 
   # -----
@@ -163,7 +204,7 @@ defmodule Triex do
   Returns the Metrics (see type definition).
   """
   @spec info(T.trie(), bool()) :: %T.Metrics{}
-  def info({:trie, root, _sink} = trie, print? \\ true) when is_pid(root) do
+  def info({:triex, root} = trie, print? \\ true) when is_pid(root) do
     root_ipid = Exa.Process.ipid(root)
     {nodes, edges} = dump(trie)
 
@@ -196,8 +237,7 @@ defmodule Triex do
       edge: length(edges),
       head: Map.fetch!(histo, root_ipid),
       final: final,
-      branch: branch,
-      leaf: 1
+      branch: branch
     }
 
     if print? do
@@ -208,6 +248,7 @@ defmodule Triex do
       IO.puts("  head:   #{mx.head}")
       IO.puts("  branch: #{mx.branch}")
       IO.puts("  final:  #{mx.final}")
+      IO.puts("  leaf:   #{mx.leaf}")
     end
 
     mx
@@ -229,7 +270,7 @@ defmodule Triex do
   # the count of nodes yet to report starts at 1
   # each node report decrements the count by one
   # but each outgoing edge increments the count by 1
-  @spec dump_recv(non_neg_integer(), vert_mol(), MapSet.t()) :: T.graph_info()
+  @spec dump_recv(E.count(), vert_mol(), MapSet.t()) :: T.graph_info()
 
   defp dump_recv(0, nodemap, edgeset) do
     # build multi-line label where paths merge
@@ -267,6 +308,25 @@ defmodule Triex do
           end)
 
         dump_recv(n - 1 + map_size(out_edges), new_nodes, new_edgeset)
+    after
+      @timeout -> raise RuntimeError, message: "Timeout"
+    end
+  end
+
+  # special dump traversal to just count the number of nodes
+  @spec nnodes(T.trie()) :: E.count1()
+  defp nnodes(trie) when is_trie(trie) do
+    dispatch_root(trie, {:dump, ""})
+    nnode_recv(1, MapSet.new())
+  end
+
+  @spec nnode_recv(E.count(), MapSet.t()) :: E.count1()
+
+  defp nnode_recv(0, nodeset), do: MapSet.size(nodeset)
+
+  defp nnode_recv(n, nodeset) do
+    receive do
+      {:node, id, _, _, _} -> nnode_recv(n - 1, MapSet.put(nodeset, id))
     after
       @timeout -> raise RuntimeError, message: "Timeout"
     end
@@ -318,11 +378,12 @@ defmodule Triex do
 
   # send a message to the root node for forward traversal
   # this self process is the executor to receive replies
-  @spec dispatch_root(T.trie(), any()) :: any()
-  defp dispatch_root({:trie, root, _sink}, msg), do: send(root, {self(), msg})
+  @spec dispatch_root(T.trie() | btrie(), any()) :: any()
+  defp dispatch_root({:triex, root}, msg), do: send(root, {self(), msg})
+  defp dispatch_root({:triex, root, _}, msg), do: send(root, {self(), msg})
 
   # send a message to the sink node for reverse traversal
   # this self process is the executor to receive replies
-  @spec dispatch_sink(T.trie(), any()) :: any()
-  defp dispatch_sink({:trie, _root, sink}, msg), do: send(sink, {self(), msg})
+  @spec dispatch_sink(btrie(), any()) :: any()
+  defp dispatch_sink({:triex, _, sink}, msg), do: send(sink, {self(), msg})
 end

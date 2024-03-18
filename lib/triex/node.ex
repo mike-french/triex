@@ -1,5 +1,11 @@
 defmodule Triex.Node do
-  @moduledoc "The processing node of a trie."
+  @moduledoc """
+  The processing node of a trie.
+
+  There are two phases: 
+  - build construction (bnode)
+  - match operation (mnode)
+  """
 
   use Triex.Constants
 
@@ -16,7 +22,7 @@ defmodule Triex.Node do
   @typep revedge() :: {char(), pid()}
 
   # incoming edges are one-many character to pid list (MoL)
-  @typep revmap() :: %{char() => [pid(), ...]}
+  @typep revedges() :: %{char() => [pid(), ...]}
 
   defguardp is_sink(final?, edges, _) when final? and edges == %{}
 
@@ -43,36 +49,16 @@ defmodule Triex.Node do
     spawn_link(__MODULE__, :init, [final?, Mol.new() |> Mol.add(c, pid)])
   end
 
-  @spec init(bool(), revmap()) :: no_return()
-  def init(final?, revedges) do
-    # Process.flag(:trap_exit, true)
-    node(final?, %{}, revedges)
-  end
+  @spec init(bool(), revedges()) :: no_return()
+  def init(final?, revedges), do: b_node(final?, %{}, revedges)
 
-  # ---------
-  # main loop
-  # ---------
+  # ----------
+  # build node
+  # ----------
 
-  @spec node(bool(), forward :: edgemap(), reverse :: revmap()) :: no_return()
-  defp node(final?, edges, revedges) do
+  @spec b_node(bool(), forward :: edgemap(), reverse :: revedges()) :: no_return()
+  defp b_node(final?, edges, revedges) do
     receive do
-      # match ----------
-
-      {exec, {:match, <<>>}} ->
-        # empty string at terminal node is success
-        # empty string at non-terminal node is failure
-        send(exec, {:matched, final?})
-
-      {exec, {:match, <<c::utf8, rest::binary>>}} when is_map_key(edges, c) ->
-        # next character has a valid transition
-        send(Map.fetch!(edges, c), {exec, {:match, rest}})
-
-      {exec, {:match, _str}} ->
-        # still some unmatched input
-        # we are not the final answer
-        # there are no more matched transitions, so failure
-        send(exec, {:matched, false})
-
       # add ----------
       # mostly tree-based constructor with a single final node (sink)
 
@@ -84,23 +70,19 @@ defmodule Triex.Node do
         # last link goes to the sink, so end traversal
         send(sink, {:add_rev, c, self()})
         send(exec, {:add_word, :ok})
-        node(final?, Map.put(edges, c, sink), revedges)
+        b_node(final?, Map.put(edges, c, sink), revedges)
 
       {exec, {:add_word, <<c::utf8, rest::binary>>, sink}} ->
         # no existing path, spawn a new child node
         pid = start(false, {c, self()})
         # continue traversal to the new node
         send(pid, {exec, {:add_word, rest, sink}})
-        node(final?, Map.put(edges, c, pid), revedges)
+        b_node(final?, Map.put(edges, c, pid), revedges)
 
       {exec, {:add_word, <<>>, _sink}} ->
         # new final node within existing structure
         send(exec, {:add_word, :ok})
-        node(true, edges, revedges)
-
-      {:add_rev, c, pid} ->
-        # add a reverse parent link to sink node
-        node(final?, edges, Mol.add(revedges, c, pid))
+        b_node(true, edges, revedges)
 
       # suffixes ----------
       # reverse traversals from sink:
@@ -111,14 +93,10 @@ defmodule Triex.Node do
 
       {exec, :suffix_build} when is_sink(final?, edges, revedges) ->
         # start reverse traversal in the sink
-        sink = self()
-
         sufmap =
           Enum.reduce(revedges, %{}, fn {c, pids}, sufmap ->
-            tail = [c]
-
             Enum.reduce(pids, sufmap, fn pid, sufmap ->
-              send(pid, {sink, {:suffix_build, tail, sufmap}})
+              send(pid, {self(), {:suffix_build, [c], sufmap}})
 
               receive do
                 {:suffix_build, new_sufmap} -> new_sufmap
@@ -138,7 +116,7 @@ defmodule Triex.Node do
 
         new_sufmap =
           Enum.reduce(Map.keys(sufmap), sufmap, fn key, sufmap ->
-            if length(key) > length(tail) and
+            if length(key) >= length(tail) and
                  List.starts_with?(Enum.reverse(key), liat) do
               Map.delete(sufmap, key)
             else
@@ -150,10 +128,9 @@ defmodule Triex.Node do
         send(sink, {:suffix_build, new_sufmap})
 
       {sink, {:suffix_build, tail, sufmap}} ->
-        # one reverse edge
+        # propagate non-final linear chain
         [{r, [next_pid]}] = Map.to_list(revedges)
         new_tail = [r | tail]
-        # propagate non-final linear chain
         new_sufmap = Map.put(sufmap, new_tail, self())
         send(next_pid, {sink, {:suffix_build, new_tail, new_sufmap}})
 
@@ -161,16 +138,12 @@ defmodule Triex.Node do
 
       {exec, {:suffix_merge, sufmap}} when is_sink(final?, edges, revedges) ->
         # start reverse traversal in the sink
-        sink = self()
-
-        Enum.each(revedges, fn {c, pids} ->
-          tail = [c]
-
-          Enum.each(pids, fn pid ->
-            send(pid, {sink, {:suffix_merge, tail, sufmap}})
+        Enum.reduce(revedges, 1, fn {c, pids}, n ->
+          Enum.reduce(pids, n, fn pid, n ->
+            send(pid, {self(), {:suffix_merge, [c], sufmap}})
 
             receive do
-              {:suffix_merge, :ok} -> :ok
+              {:suffix_merge, :ok} -> n + 1
             after
               @timeout -> raise RuntimeError, message: "Timeout"
             end
@@ -191,40 +164,101 @@ defmodule Triex.Node do
               send(oldpid, {:EXIT, :suffix})
               # reference the shared suffix
               sufpid = Map.fetch!(sufmap, tail)
+              # add the new parent to the head of the suffix
+              send(sufpid, {:add_rev, c, self()})
               Map.replace!(edges, c, sufpid)
 
-            length(tail) == 1 ->
+            length(tail) == 1 and not final? ->
               # initial step up from sink is never in the suffix map
-              # but always continue traversal
+              # continue traversal
               edges
 
             true ->
-              # no suffix match, terminate traversal
+              # no suffix match, or final node, terminate traversal
               send(sink, {:suffix_merge, :ok})
-              node(final?, edges, revedges)
+              b_node(final?, edges, revedges)
           end
 
-        # continue traversal up to parent
-        [{r, [parent]}] = Map.to_list(revedges)
-        new_tail = [r | tail]
-        send(parent, {sink, {:suffix_merge, new_tail, sufmap}})
-        node(final?, new_edges, revedges)
+        # continue traversal up to original parent
+        # first parent is the hd because extra refs are appended
+        [{r, [parent | _]}] = Map.to_list(revedges)
+        send(parent, {sink, {:suffix_merge, [r | tail], sufmap}})
+        b_node(final?, new_edges, revedges)
+
+      {:EXIT, :suffix} ->
+        # stop a duplicate suffix process
+        # remove reverse edges from children
+        # (in practice, only ever a single child edge)
+        Enum.each(edges, fn {c, pid} -> send(pid, {:del_rev, c, self()}) end)
+        exit(:normal)
+
+      {:add_rev, c, pid} ->
+        # add a reverse parent link to sink node
+        # and the heads of shared suffixes during merge
+        # appending keeps the original parent at the head
+        b_node(final?, edges, Mol.append(revedges, c, pid))
+
+      {:del_rev, c, pid} ->
+        # delete a reverse parent link when nodes are killed
+        b_node(final?, edges, Mol.remove(revedges, c, pid))
+
+      # freeze ----------
+      # convert to match runtime mode
+
+      {exec, :freeze} = msg ->
+        send(exec, {:freeze, map_size(edges)})
+        Enum.each(edges, fn {_, pid} -> send(pid, msg) end)
+        m_node(final?, edges)
+
+      any ->
+        throw({:unhandled_message, [__MODULE__, any]})
+    end
+
+    b_node(final?, edges, revedges)
+  end
+
+  # ----------
+  # match node
+  # ----------
+
+  @spec m_node(bool(), forward :: edgemap()) :: no_return()
+  defp m_node(final?, edges) do
+    receive do
+      # match ----------
+
+      {exec, {:match, <<>>}} ->
+        # empty string at terminal node is success
+        # empty string at non-terminal node is failure
+        send(exec, {:matched, final?})
+
+      {exec, {:match, <<c::utf8, rest::binary>>}} when is_map_key(edges, c) ->
+        # next character already has a valid transition
+        send(Map.fetch!(edges, c), {exec, {:match, rest}})
+
+      {exec, {:match, _str}} ->
+        # still some unmatched input
+        # we are not the final answer
+        # there are no more matched transitions, so failure
+        send(exec, {:matched, false})
 
       # dump ----------
-      # output metrics and diagrams
 
       {exec, {:dump, str}} ->
-        # return this node info
-        send(exec, {:node, Exa.Process.iself(), str, final?, edges})
-        # propagate through all the outgoing edges
+        send(exec, {:node, Exa.Process.ipid(), str, final?, edges})
+
         Enum.each(edges, fn {c, pid} ->
           send(pid, {exec, {:dump, <<str::binary, c::utf8>>}})
         end)
 
-      {:EXIT, :suffix} ->
-        exit(:normal)
+      # freeze ----------
 
-      {:EXIT, :teardown} = msg ->
+      {exec, :freeze} ->
+        send(exec, {:freeze, 0})
+
+      # teardown ----------
+
+      {exec, {:EXIT, :teardown}} = msg ->
+        send(exec, {:teardown, :ok})
         Enum.each(edges, fn {_, pid} -> send(pid, msg) end)
         exit(:normal)
 
@@ -232,6 +266,6 @@ defmodule Triex.Node do
         throw({:unhandled_message, [__MODULE__, any]})
     end
 
-    node(final?, edges, revedges)
+    m_node(final?, edges)
   end
 end

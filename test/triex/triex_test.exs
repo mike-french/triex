@@ -34,7 +34,7 @@ defmodule Triex.TriexTest do
   defp dot_file(name), do: Exa.File.join(@dot_dir, name, @filetype_dot)
 
   test "simple" do
-    trie = new(["abc", "a", "xyz", "abcdef", "abcpqr"])
+    trie = start(["abc", "a", "xyz", "abcdef", "abcpqr"])
 
     assert match(trie, "a")
     assert match(trie, "abc")
@@ -51,11 +51,11 @@ defmodule Triex.TriexTest do
     assert not match(trie, "abcdxyz")
     assert not match(trie, "xyzabc")
 
-    teardown(trie)
+    stop(trie)
   end
 
   test "unicode" do
-    trie = new(["好久不见", "龙年"])
+    trie = start(["好久不见", "龙年"])
 
     assert match(trie, "好久不见")
     assert match(trie, "龙年")
@@ -65,11 +65,11 @@ defmodule Triex.TriexTest do
     assert not match(trie, "龙")
     assert not match(trie, "黑龙江")
 
-    teardown(trie)
+    stop(trie)
   end
 
   test "dump" do
-    trie = new(["abc", "a", "xyz", "abcdef", "abcpqr"])
+    trie = start(["abc", "a", "xyz", "abcdef", "abcpqr"])
     info = info(trie)
 
     assert %T.Metrics{
@@ -113,19 +113,19 @@ defmodule Triex.TriexTest do
              {_, "z", _}
            ] = edges
 
-    teardown(trie)
+    stop(trie)
   end
 
   test "dump dot" do
     file = dot_file("abc")
-    trie = new(["abc", "a", "xyz", "abcdef", "abcpqr"])
+    trie = start(["abc", "a", "xyz", "abcdef", "abcpqr"])
     dump_dot(trie, file)
-    teardown(trie)
+    stop(trie)
   end
 
   test "matches" do
     trie =
-      new([
+      start([
         "nunc",
         "nulla",
         "magna",
@@ -141,12 +141,12 @@ defmodule Triex.TriexTest do
              "nunc" => [{3, 3, 114}]
            } == result
 
-    teardown(trie)
+    stop(trie)
   end
 
   test "file" do
     trie =
-      new([
+      start([
         "nunc",
         "nulla",
         "magna",
@@ -160,7 +160,7 @@ defmodule Triex.TriexTest do
     assert hd(result["nulla"]) == {1, 251, 251}
     assert hd(result["magna"]) == {3, 282, 1003}
 
-    teardown(trie)
+    stop(trie)
   end
 
   @words [
@@ -178,6 +178,20 @@ defmodule Triex.TriexTest do
     "wages"
   ]
 
+  test "words" do
+    trie = start(@words)
+
+    Enum.each(@words, fn w -> assert match(trie, w) end)
+
+    assert not match(trie, "k")
+    assert not match(trie, "pag")
+    assert not match(trie, "ing")
+    assert not match(trie, "walks")
+    assert not match(trie, "waging")
+
+    stop(trie)
+  end
+
   test "info" do
     winfo = do_info(@words, "words")
 
@@ -193,12 +207,12 @@ defmodule Triex.TriexTest do
   end
 
   defp do_info(words, name) do
-    trie = new(words)
+    trie = start(words)
     info = info(trie)
     dump(trie)
     file = dot_file(name)
     dump_dot(trie, file)
-    teardown(trie)
+    stop(trie)
     info
   end
 end

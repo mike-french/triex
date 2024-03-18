@@ -7,10 +7,11 @@ defmodule Triex.Types do
   # types 
   # -----
 
-  @type trie() :: {:trie, root :: pid(), sink :: pid()}
+  @typedoc "A Triex structure."
+  @type trie() :: {:triex, root :: pid()}
   defguard is_trie(t)
-           when is_tuple(t) and tuple_size(t) == 3 and elem(t, 0) == :trie and
-                  is_pid(elem(t, 1)) and is_pid(elem(t, 2))
+           when is_tuple(t) and tuple_size(t) == 2 and
+                  elem(t, 0) == :triex and is_pid(elem(t, 1))
 
   # types for tree info returned by 'dump'
   # 'node' is a reserved type, so use vert instead
@@ -39,14 +40,9 @@ defmodule Triex.Types do
 
   @type graph_info() :: {verts(), edges()}
 
-  # suffix map
-  # constructed by add_revs and reverse
-  # then used to construct the forward trie
-  @type sufmap() :: %{charlist() => pid()}
-
   defmodule Metrics do
     @moduledoc "Metrics for counts of trie structure nodes and edges:"
-    defstruct [:node, :edge, :head, :final, :branch, :leaf, root: 1]
+    defstruct [:node, :edge, :head, :final, :branch, leaf: 1, root: 1]
   end
 
   @typedoc """
@@ -67,6 +63,10 @@ defmodule Triex.Types do
   (empty string is a common prefix for all words)
   and when there are common prefixes within the trie.
 
+  Final nodes always include the sink node,
+  plus any internal nodes that match a word 
+  which is a prefix of another valid word.
+
   There is only one root.
 
   There is only one sink (leaf).
@@ -77,7 +77,7 @@ defmodule Triex.Types do
           head: E.count(),
           final: E.count(),
           branch: E.count(),
-          leaf: E.count(),
+          leaf: 1,
           root: 1
         }
 end

@@ -11,13 +11,13 @@ Triex is based on the idea of _Process Oriented Programming:_
 * Processes communicate asynchronously by passing messages. 
 * Process networks naturally run in parallel.
 
-Usually a _trie_ is built as a prefix _tree_ (hence, the name).
-
 Triex does not store partial match values in the nodes,
 so it can merge leaves into a single sink node, 
 and share paths for some common suffixes
 (i.e. single-link chains ending at the sink node, 
 which do not contain intermediate final matches).
+
+Usually a _trie_ is built as a prefix _tree_ (hence, the name).
 
 _Triex builds a Directed Acyclic Graph (DAG) of process nodes._
 
@@ -39,26 +39,28 @@ Each process (node) has:
 - Map of matching characters to the next (child) process 
   in the DAG (outgoing edges).
 - A list of reverse edges back to parents 
-  (only used during construction)
   
 Note that partial/final strings are not stored in the nodes:
 nodes do not know the string or prefix that they match.
 This allows the same node to match multiple input strings
-but merging suffixes into a DAG structure.
+by merging common suffixes into a DAG structure.
 
-(The list of reverse edges could be removed after construction,
-to reduce the memory usage during _match_ traversals.)
+A list of reverse edges back to parents is maintained 
+during construction, but is discarded before _freezing_
+into runtime mode.
 
 Traversals of the tree are implemented as a sequence of messages
 propagating down one path within the DAG.
 
-There are two phases of construction and use. 
+There are several phases of construction and use. 
 - Construction has three types of traversal:
    - Traverse from the root to add all strings to form a tree
      of processes, but joined into a single final _sink_ node.
-   - Traverse backwrds from the final sink node to find common suffixes.
+   - Traverse backwards from the final sink node to find common suffixes.
    - Traverse backwards from the sink to merge common suffixes.
+   - Traverse from the root to _freeze_ the network.
 - Match a target string by traversing from the root.
+- Dump information and diagrams by traversing from the root.
 
 ## Example
 
@@ -77,22 +79,22 @@ The triex DAG with merged sink node and common suffixes is
 
 [![Triex DAG](./diagrams/dag_words_small.png)](./diagrams/dag_words.png)
 
-The DAG does not reduce the time to make a match,
-because the same number of edge traversals are always needed,
-but it does reduce the total memory usage of the network,
-by reducing the number of processes.
+The DAG does not reduce the work to make a match,
+because the same number of edge traversals are required,
+but it does cut the total memory usage of the network,
+by reducing the number of processes (31 down to 19 in the example).
 
 ## API
 
 There are only four areas of functionality:
-- `new`: build a new triex for a list of target strings
+- `start`: build a new triex for a list of target strings
 - `match`, `matches`, `match_file`: match one or more tokens against the triex
 - `info`, `dump`, `dump_dot`: find metrics for the network and 
    convert structure to GraphViz DOT format for rendering
-- `teardown`: destroy the triex process network
+- `stop`: destroy the triex process network
   
-`new` creates a new trie containing root and sink nodes (processes)
-and adds a list of strings to the network. 
+`start` creates a new trie containing root and sink nodes (processes),
+then adds a list of target strings to the network. 
 It calls the internal `add` function...
 
 `add` initiates an _add_ traversal from the root of the triex.  
@@ -102,10 +104,11 @@ and the traversal continues (like laying the track in front of the train).
 When the input string is consumed,
 the last node is marked as a terminal _success_ node.
 
-After all strings are added, there are two further traversals,
+After all strings are added, there are three further traversals,
 starting at the final sink node:
-- find the common suffixes
+- find common suffixes
 - merge processes to reuse shared suffix process chains
+- freeze the network for use in matching and dumping
 
 `match` tests if a complete string is included in the trie.
 The api function initiates a _match_ traversal of the tree. 
@@ -137,7 +140,7 @@ by adding `triex` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:triex, git: "https://github.com/mike-french/triex.git", tag: "1.1.0"}
+    {:triex, git: "https://github.com/mike-french/triex.git", tag: "1.2.0"}
   ]
 end
 ```
